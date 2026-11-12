@@ -4,6 +4,7 @@ mod open_requests;
 mod rename;
 mod search;
 mod session;
+mod volumes;
 
 use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
@@ -132,6 +133,16 @@ async fn blocking<T: Send + 'static>(
     tauri::async_runtime::spawn_blocking(work)
         .await
         .map_err(|e| format!("文件操作任务失败：{e}"))?
+}
+
+#[tauri::command]
+async fn list_volumes() -> Result<Vec<volumes::Volume>, String> {
+    blocking(volumes::list).await
+}
+
+#[tauri::command]
+async fn eject_volume(path: String) -> Result<(), String> {
+    blocking(move || volumes::eject(&path)).await
 }
 
 #[tauri::command]
@@ -305,6 +316,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_app_info,
+            list_volumes,
+            eject_volume,
             startup_directory,
             take_open_directories,
             set_window_directory,

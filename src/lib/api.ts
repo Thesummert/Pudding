@@ -1,6 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
 import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core';
-import type { AppInfo, Clipboard, DirectoryListing, FileEntry } from './types';
+import type { AppInfo, Clipboard, DirectoryListing, FileEntry, Volume } from './types';
 import { getCurrentWebview, type DragDropEvent } from '@tauri-apps/api/webview';
 import { imageMimeType } from './files';
 
@@ -41,6 +41,8 @@ export const api = {
   listenSearchProgress: (handler: (progress: [number, number]) => void) => desktop ? listen<[number, number]>('search-progress', (event) => handler(event.payload)) : Promise.resolve(() => {}),
   search: (path: string, query: string, hidden: boolean, searchContent: boolean, requestId: number) => desktop ? invoke<FileEntry[]>('search_files', { path, query, hidden, searchContent, requestId }) : Promise.resolve<FileEntry[] | null>(null),
   info: () => call<AppInfo>('get_app_info'),
+  volumes: () => call<Volume[]>('list_volumes'),
+  ejectVolume: (path: string) => call<void>('eject_volume', { path }),
   startupDirectory: () => desktop ? invoke<string | null>('startup_directory') : Promise.resolve(null),
   takeOpenDirectories: () => desktop ? invoke<string[]>('take_open_directories') : Promise.resolve([]),
   listenOpenDirectories: (handler: () => void) => desktop ? getCurrentWebview().listen('open-directories', handler) : Promise.resolve(() => {}),

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert } from '@lucide/svelte';
+  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert, Eject } from '@lucide/svelte';
   import FileIcon from './lib/FileIcon.svelte';
   import FileThumbnail from './lib/FileThumbnail.svelte';
   import NameDialog from './lib/NameDialog.svelte';
@@ -53,6 +53,7 @@
   let dragModifiers = { ctrl: false, shift: false };
   let shiftHeld = $state(false);
   let clipboardRequest = 0;
+  let volumeRequest = 0;
   let dragGesture: { x: number; y: number; entry: FileEntry; pointerId: number } | null = null;
   let demoDrag: string[] | null = null;
   let pendingOpenDirectories = $state<string[]>([]);
@@ -154,6 +155,7 @@
       if (!disposed) { await initialize(); if (!disposed) openRequestsReady = true; }
     })();
     void api.listenSearchProgress(([id, count]) => { if (id === searchRequest) scanned = count; }).then((cleanup) => { if (disposed) cleanup(); else unlistenProgress = cleanup; }).catch((error) => notify(errorMessage(error), true));
+    const volumeTimer = desktop ? setInterval(() => void refreshVolumes(), 5000) : undefined;
     let changeTimer: ReturnType<typeof setTimeout>;
     function applyChanges() {
       if (busy) { changeTimer = setTimeout(applyChanges, 300); return; }
@@ -166,7 +168,7 @@
     void api.listenDrop(nativeDrop).then((cleanup) => {
       if (disposed) cleanup(); else unlisten = cleanup;
     }).catch((error) => notify(errorMessage(error), true));
-    return () => { disposed = true; unlisten?.(); unlistenChanges?.(); unlistenProgress?.(); unlistenOpen?.(); clearTimeout(changeTimer); clipboardRequest += 1; request += 1; clearTimeout(noticeTimeout); };
+    return () => { disposed = true; unlisten?.(); unlistenChanges?.(); unlistenProgress?.(); unlistenOpen?.(); clearInterval(volumeTimer); volumeRequest++; clearTimeout(changeTimer); clipboardRequest += 1; request += 1; clearTimeout(noticeTimeout); };
   });
 
   function notify(text: string, error = false) {
@@ -184,6 +186,7 @@
     initialError = '';
     try {
       info = await api.info();
+      void refreshVolumes();
       const explicitPath = new URLSearchParams(window.location.search).get('path');
       const restoredPath = explicitPath ? null : await api.startupDirectory().catch(() => null);
       await navigate(explicitPath || restoredPath || info.home);
@@ -261,7 +264,49 @@
     tabs = tabs.filter((tab) => tab.id !== id);
   }
 
-  function refresh() { if (directory && !busy) void navigate(directory.path, undefined, true); }
+  async function refreshVolumes() {
+    const id = ++volumeRequest;
+    try {
+      const roots = await api.volumes();
+      if (id === volumeRequest && info) info = { ...info, roots };
+    } catch { /* Keep the last known devices if the system is temporarily unavailable. */ }
+  }
+
+  function insideVolume(path: string, root: string): boolean {
+    const normalize = (value: string) => {
+      const normalized = value.replace(/\\/g, '/').replace(/\/$/, '');
+      return info?.platform === 'windows' ? normalized.toLowerCase() : normalized;
+    };
+    const target = normalize(path), prefix = normalize(root);
+    return target === prefix || target.startsWith(`${prefix}/`);
+  }
+
+  async function ejectVolume(root: { path: string; name: string }) {
+    if (!info || busy) return;
+    const home = info.home;
+    operating = true;
+    try {
+      await api.ejectVolume(root.path);
+      const sanitize = (tab: Tab): Tab => {
+        const remaining = tab.history.filter((path) => !insideVolume(path, root.path));
+        const before = tab.history.slice(0, tab.historyIndex + 1).filter((path) => !insideVolume(path, root.path)).length;
+        return insideVolume(tab.path, root.path)
+          ? { ...tab, path: home, history: [home], historyIndex: 0 }
+          : { ...tab, history: remaining.length ? remaining : [tab.path], historyIndex: Math.max(0, before - 1) };
+      };
+      tabs = tabs.map(sanitize);
+      const active = tabs.find((tab) => tab.id === activeTab);
+      if (active) { history = [...active.history]; historyIndex = active.historyIndex; }
+      const wasCurrent = !!directory && insideVolume(directory.path, root.path);
+      operating = false;
+      if (wasCurrent) await navigate(home);
+      await refreshVolumes();
+      notify(`已推出「${root.name}」`);
+    } catch (error) { notify(errorMessage(error), true); }
+    finally { operating = false; }
+  }
+
+  function refresh() { if (directory && !busy) { void refreshVolumes(); void navigate(directory.path, undefined, true); } }
   function back() { if (!busy && historyIndex > 0) void navigate(history[historyIndex - 1], historyIndex - 1); }
   function forward() { if (!busy && historyIndex < history.length - 1) void navigate(history[historyIndex + 1], historyIndex + 1); }
   function up() { if (!busy && directory?.parent) void navigate(directory.parent); }
@@ -575,6 +620,14 @@
     else { sort = key; descending = key === 'modified'; }
   }
 
+  function mouseNavigation(event: MouseEvent) {
+    if (event.button !== 3 && event.button !== 4) return;
+    // Suppress the webview's own history navigation, even at history boundaries.
+    event.preventDefault();
+    if (document.querySelector('dialog[open]') || busy) return;
+    if (event.button === 3) back(); else forward();
+  }
+
   function keydown(event: KeyboardEvent) {
     dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey };
     shiftHeld = event.shiftKey;
@@ -624,7 +677,7 @@
   }
 </script>
 
-<svelte:window onfocus={() => void syncClipboard()} onpointermove={pointerMove} onpointerup={(event) => { dragGesture = null; endMarquee(event); }} onpointercancel={(event) => { dragGesture = null; endMarquee(event, true); }} ondragover={demoDragOver} ondrop={demoDrop} ondragend={() => { demoDrag = null; dropTarget = null; }} ondragleave={(event) => { if (!event.relatedTarget) dropTarget = null; }} onkeydown={keydown} onkeyup={(event) => { dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey }; shiftHeld = event.shiftKey; }} onclick={() => { context = null; optionsOpen = false; dropMenu = null; }} onblur={() => { context = null; optionsOpen = false; dragGesture = null; dropTarget = null; shiftHeld = false; if (marquee) selected = new Set(marquee.initial); marquee = null; }} onresize={() => context = null} />
+<svelte:window onmousedown={mouseNavigation} onauxclick={(event) => { if (event.button === 3 || event.button === 4) event.preventDefault(); }} onfocus={() => { void syncClipboard(); void refreshVolumes(); }} onpointermove={pointerMove} onpointerup={(event) => { dragGesture = null; endMarquee(event); }} onpointercancel={(event) => { dragGesture = null; endMarquee(event, true); }} ondragover={demoDragOver} ondrop={demoDrop} ondragend={() => { demoDrag = null; dropTarget = null; }} ondragleave={(event) => { if (!event.relatedTarget) dropTarget = null; }} onkeydown={keydown} onkeyup={(event) => { dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey }; shiftHeld = event.shiftKey; }} onclick={() => { context = null; optionsOpen = false; dropMenu = null; }} onblur={() => { context = null; optionsOpen = false; dragGesture = null; dropTarget = null; shiftHeld = false; if (marquee) selected = new Set(marquee.initial); marquee = null; }} onresize={() => context = null} />
 
 <div class="app-shell" data-theme={preferences.dark ? 'dark' : 'light'}>
   <header class="app-header">
@@ -654,7 +707,7 @@
         <div class="section-label">设备与磁盘<span>DEVICES</span></div>
         <nav class="places devices" aria-label="设备与磁盘">
           {#each info?.roots ?? [] as root}
-            <button data-drop-path={root.path} class:drop-target={dropRegion === 'sidebar' && dropTarget === root.path} class:active={directory?.path === root.path} onclick={() => navigate(root.path)} disabled={operating} title={root.path}><HardDrive size={18} strokeWidth={1.8} /><span>{root.name}</span></button>
+            <div class="device-row"><button class="device-open" data-drop-path={root.path} class:drop-target={dropRegion === 'sidebar' && dropTarget === root.path} class:active={directory?.path === root.path} onclick={() => navigate(root.path)} disabled={operating} title={root.path}><HardDrive size={18} strokeWidth={1.8} /><span>{root.name}</span></button>{#if root.ejectable}<button class="device-eject" title={`推出 ${root.name}`} aria-label={`推出 ${root.name}`} onclick={() => ejectVolume(root)} disabled={busy}><Eject size={15} /></button>{/if}</div>
           {/each}
         </nav>
         <div class="sidebar-note"><span class="note-icon"><Folder size={19} strokeWidth={1.5} /></span><p>给每一份灵感<br />一个妥帖的位置。</p><span class="note-line"></span></div>
@@ -804,5 +857,5 @@
 
   <dialog class="modal trash-modal" bind:this={trashDialog} oncancel={(event) => { if (operating) event.preventDefault(); }}><div class="modal-top"><span class="modal-icon danger"><Trash2 size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => trashDialog.close()} disabled={operating}><X size={18} /></button></div><h2>{permanentDelete ? '永久删除？' : '移入回收站？'}</h2><p>{permanentDelete ? `将永久删除选中的 ${selected.size} 个项目，此操作无法撤销。` : `将选中的 ${selected.size} 个项目移入系统回收站。你可以稍后从系统回收站中恢复。`}</p><div class="modal-actions"><button class="button" onclick={() => trashDialog.close()} disabled={operating}>取消</button><button class="button danger-button" onclick={moveToTrash} disabled={busy}>{#if operating}<LoaderCircle size={16} class="spin" />{/if}{permanentDelete ? '永久删除' : '移入回收站'}</button></div></dialog>
 
-  <dialog class="modal help-modal" bind:this={helpDialog}><div class="modal-top"><span class="modal-icon"><Keyboard size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => helpDialog.close()}><X size={18} /></button></div><h2>键盘快捷键</h2><p>Pudding 0.1 · Tauri + Svelte</p><dl class="shortcut-list">{#each [[`${shortcutModifier} T / W`, '新建 / 关闭标签页'], [`${shortcutModifier} L`, '输入文件夹路径'], [`${shortcutModifier} F`, '搜索文件名或内容'], ['Alt ↑ / ← / →', '上一级 / 后退 / 前进'], [`${shortcutModifier} Shift N`, '新建文件夹'], [`${shortcutModifier} A`, '选择所有项目'], [`${shortcutModifier} C / X / V`, '复制 / 剪切 / 粘贴'], ['F2', '重命名'], ['Delete / Shift Delete', '移入回收站 / 永久删除'], ['F5', '刷新'], [`${shortcutModifier} Shift .`, '显示或隐藏隐藏文件']] as [keys, label]}<div><dt>{label}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{#if !desktop}<p class="help-demo">当前为浏览器演示。使用 <code>npm run tauri dev</code> 启动桌面版，管理真实文件。</p>{/if}</dialog>
+  <dialog class="modal help-modal" bind:this={helpDialog}><div class="modal-top"><span class="modal-icon"><Keyboard size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => helpDialog.close()}><X size={18} /></button></div><h2>键盘快捷键</h2><p>Pudding 0.1 · Tauri + Svelte</p><dl class="shortcut-list">{#each [[`${shortcutModifier} T / W`, '新建 / 关闭标签页'], [`${shortcutModifier} L`, '输入文件夹路径'], [`${shortcutModifier} F`, '搜索文件名或内容'], ['Alt ↑ / ← / →', '上一级 / 后退 / 前进'], ['鼠标侧键', '后退 / 前进'], [`${shortcutModifier} Shift N`, '新建文件夹'], [`${shortcutModifier} A`, '选择所有项目'], [`${shortcutModifier} C / X / V`, '复制 / 剪切 / 粘贴'], ['F2', '重命名'], ['Delete / Shift Delete', '移入回收站 / 永久删除'], ['F5', '刷新'], [`${shortcutModifier} Shift .`, '显示或隐藏隐藏文件']] as [keys, label]}<div><dt>{label}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{#if !desktop}<p class="help-demo">当前为浏览器演示。使用 <code>npm run tauri dev</code> 启动桌面版，管理真实文件。</p>{/if}</dialog>
 </div>

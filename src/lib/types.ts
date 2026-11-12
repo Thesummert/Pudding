@@ -22,11 +22,15 @@ export interface Place {
   path: string;
 }
 
+export interface Volume extends Place {
+  ejectable: boolean;
+}
+
 export interface AppInfo {
   home: string;
   platform: string;
   places: Place[];
-  roots: Place[];
+  roots: Volume[];
 }
 
 export type SortKey = 'name' | 'modified' | 'size' | 'type';

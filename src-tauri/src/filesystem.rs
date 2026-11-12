@@ -42,7 +42,7 @@ pub struct AppInfo {
     home: String,
     platform: String,
     places: Vec<Place>,
-    roots: Vec<Place>,
+    roots: Vec<crate::volumes::Volume>,
 }
 
 fn display(path: &Path) -> String {
@@ -99,41 +99,7 @@ pub fn app_info() -> Result<AppInfo> {
             })
         })
         .collect();
-    let mut roots = Vec::new();
-    #[cfg(windows)]
-    for letter in b'A'..=b'Z' {
-        let path = format!("{}:\\", char::from(letter));
-        if Path::new(&path).is_dir() {
-            roots.push(Place {
-                id: path.clone(),
-                name: format!("本地磁盘 ({}:)", char::from(letter)),
-                path,
-            });
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        roots.push(Place {
-            id: "root".into(),
-            name: "文件系统".into(),
-            path: "/".into(),
-        });
-        #[cfg(target_os = "macos")]
-        let mounts = vec![PathBuf::from("/Volumes")];
-        #[cfg(not(target_os = "macos"))]
-        let mounts = vec![PathBuf::from("/media"), PathBuf::from("/mnt")];
-        for mount in mounts {
-            if let Ok(entries) = fs::read_dir(mount) {
-                for entry in entries.flatten().filter(|e| e.path().is_dir()) {
-                    roots.push(Place {
-                        id: display(&entry.path()),
-                        name: entry.file_name().to_string_lossy().into(),
-                        path: display(&entry.path()),
-                    });
-                }
-            }
-        }
-    }
+    let roots = crate::volumes::list().unwrap_or_else(|_| crate::volumes::fallback());
     Ok(AppInfo {
         home: display(&home),
         platform: std::env::consts::OS.into(),

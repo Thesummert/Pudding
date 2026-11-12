@@ -384,6 +384,59 @@ describe('file manager interactions', () => {
     await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('主文件夹.'));
   });
 
+  it('refreshes connected volumes and safely ejects the current volume', async () => {
+    const roots = [
+      { id: '/', path: '/', name: '文件系统', ejectable: false },
+      { id: 'disk', path: '/home/pudding/Documents', name: '移动磁盘', ejectable: true },
+    ];
+    const volumes = vi.spyOn(api, 'volumes').mockResolvedValue(roots);
+    const eject = vi.spyOn(api, 'ejectVolume').mockResolvedValue();
+    window.dispatchEvent(new Event('focus'));
+    await vi.waitFor(() => expect(button('推出 移动磁盘')).toBeTruthy());
+    expect(host.querySelector('[aria-label="推出 文件系统"]')).toBeNull();
+    await doubleClick('Documents');
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    volumes.mockResolvedValue([roots[0]]);
+    await click(button('推出 移动磁盘'));
+    await vi.waitFor(() => expect(eject).toHaveBeenCalledWith('/home/pudding/Documents'));
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('主文件夹.'));
+    await vi.waitFor(() => expect(host.querySelector('[aria-label="推出 移动磁盘"]')).toBeNull());
+    expect(button('后退').disabled).toBe(true);
+  });
+
+  it('keeps the current directory when ejecting a volume fails', async () => {
+    vi.spyOn(api, 'volumes').mockResolvedValue([{ id: 'disk', path: '/home/pudding/Documents', name: '移动磁盘', ejectable: true }]);
+    vi.spyOn(api, 'ejectVolume').mockRejectedValue(new Error('磁盘正在使用'));
+    window.dispatchEvent(new Event('focus'));
+    await vi.waitFor(() => expect(button('推出 移动磁盘')).toBeTruthy());
+    await doubleClick('Documents');
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    await click(button('推出 移动磁盘'));
+    await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain('磁盘正在使用'));
+    expect(host.querySelector('h1')?.textContent).toBe('文档.');
+  });
+
+  it('navigates the active tab with mouse side buttons and ignores them in dialogs', async () => {
+    function sideButton(button: number, type = 'mousedown') {
+      const event = new MouseEvent(type, { button, bubbles: true, cancelable: true });
+      host.querySelector('.file-area')!.dispatchEvent(event);
+      return event;
+    }
+    await doubleClick('Documents');
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    expect(sideButton(3).defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('主文件夹.'));
+    expect(sideButton(4).defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    expect(sideButton(3, 'auxclick').defaultPrevented).toBe(true);
+    expect(sideButton(1).defaultPrevented).toBe(false);
+    await click(button('新建文件夹'));
+    expect(host.querySelector('dialog[open]')).not.toBeNull();
+    expect(sideButton(3).defaultPrevented).toBe(true);
+    await tick();
+    expect(host.querySelector('h1')?.textContent).toBe('文档.');
+  });
+
   it('navigates with history, parent controls and manually entered paths', async () => {
     await doubleClick('Documents');
     await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));

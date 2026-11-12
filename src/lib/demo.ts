@@ -35,7 +35,7 @@ folders[`${home}/Pictures/壁纸`] = [];
 folders[`${home}/Projects`] = [entry(`${home}/Projects`, 'pudding', true), entry(`${home}/Projects`, 'README.md', false, 3120, 2)];
 folders[`${home}/Projects/pudding`] = [entry(`${home}/Projects/pudding`, 'package.json', false, 1024, 4)];
 
-export const demoInfo: AppInfo = { home, platform: 'demo', places, roots: [{ id: 'root', name: '文件系统', path: '/' }] };
+export const demoInfo: AppInfo = { home, platform: 'demo', places, roots: [{ id: 'root', name: '文件系统', path: '/', ejectable: false }] };
 
 function getFolder(path: string): FileEntry[] {
   if (!folders[path]) throw new Error('演示目录不存在，请选择侧栏中的文件夹。');
@@ -70,6 +70,7 @@ function remove(path: string) {
 export async function demoInvoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   let result: unknown;
   if (command === 'get_app_info') result = demoInfo;
+  else if (command === 'list_volumes') result = structuredClone(demoInfo.roots);
   else if (command === 'read_directory') {
     const path = String(args.path).replace(/^~(?=\/|$)/, home).replace(/\/$/, '') || '/';
     result = { path, parent: path === '/' ? null : path.slice(0, path.lastIndexOf('/')) || '/', entries: structuredClone(getFolder(path)), skipped: 0 } satisfies DirectoryListing;
