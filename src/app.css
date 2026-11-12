@@ -327,6 +327,15 @@ h1 { margin: 4px 0 3px; font-size: 22px; color: var(--heading); letter-spacing: 
 .danger-button { background: #d85665; border-color: #d85665; color: #fff; }
 .danger-button:not(:disabled):hover { background: #c24756; border-color: #c24756; }
 .help-modal { width: 455px; }
+.settings-modal { width: 480px; max-height: calc(100dvh - 40px); overflow-y: auto; }
+.settings-list { border-top: 1px solid var(--line); }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.settings-row > span { display: flex; flex-direction: column; gap: 5px; }
+.settings-row strong { color: var(--heading); font-size: 12px; font-weight: 600; }
+.settings-row small { color: var(--secondary); font-size: 11px; }
+.settings-row select { min-width: 86px; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--text); }
+.settings-row input { accent-color: var(--accent); flex-shrink: 0; }
+.settings-row input[type='range'] { width: 110px; }
 .shortcut-list { margin: 0; display: flex; flex-direction: column; gap: 12px; }
 .shortcut-list > div { display: flex; justify-content: space-between; align-items: center; }
 .shortcut-list dt { color: var(--secondary); font-size: 11px; }

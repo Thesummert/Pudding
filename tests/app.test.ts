@@ -530,6 +530,22 @@ describe('file manager interactions', () => {
     expect(button('设计素材.zip')).toBeTruthy();
   });
 
+  it('applies and saves settings from the settings dialog', async () => {
+    await click(button('设置'));
+    const settings = host.querySelector<HTMLDialogElement>('.settings-modal')!;
+    expect(settings.open).toBe(true);
+    const appearance = settings.querySelector<HTMLSelectElement>('[aria-label="外观"]')!;
+    appearance.value = 'dark';
+    appearance.dispatchEvent(new Event('change', { bubbles: true }));
+    const hidden = settings.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    hidden.click();
+    await tick();
+    expect(host.querySelector('.app-shell')?.getAttribute('data-theme')).toBe('dark');
+    expect(JSON.parse(localStorage.getItem('pudding.preferences')!)).toMatchObject({ dark: true, hidden: true });
+    await click(button('完成'));
+    expect(settings.open).toBe(false);
+  });
+
   it('filters, reveals hidden entries and persists view preferences', async () => {
     await click(button('更多显示选项'));
     await click(menuItem('显示隐藏文件'));

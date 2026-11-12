@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert, Eject } from '@lucide/svelte';
+  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert, Eject, Settings } from '@lucide/svelte';
   import FileIcon from './lib/FileIcon.svelte';
   import FileThumbnail from './lib/FileThumbnail.svelte';
   import NameDialog from './lib/NameDialog.svelte';
@@ -73,6 +73,7 @@
   let trashDialog: HTMLDialogElement;
   let permanentDelete = $state(false);
   let helpDialog: HTMLDialogElement;
+  let settingsDialog: HTMLDialogElement;
   let context = $state<{ x: number; y: number } | null>(null);
   let optionsOpen = $state(false);
   let preview = $state<FileEntry | null>(null);
@@ -693,6 +694,7 @@
     </a>
     <div class="header-actions">
       {#if !desktop}<span class="demo-badge" title="浏览器中使用示例数据；桌面版连接真实文件系统">演示模式</span>{:else}<span class="desktop-badge"><span class="status-dot"></span>本地工作空间</span>{/if}
+      <button class="icon-button" title="设置" aria-label="设置" onclick={() => settingsDialog.showModal()}><Settings size={18} /></button>
       <button class="icon-button" title="快捷键与帮助" aria-label="快捷键与帮助" onclick={() => helpDialog.showModal()}><Keyboard size={18} /></button>
       <button class="icon-button" title={preferences.dark ? '切换浅色外观' : '切换深色外观'} aria-label={preferences.dark ? '切换浅色外观' : '切换深色外观'} onclick={() => preferences.dark = !preferences.dark}>{#if preferences.dark}<Sun size={18} />{:else}<Moon size={18} />{/if}</button>
     </div>
@@ -864,5 +866,17 @@
 
   <dialog class="modal trash-modal" bind:this={trashDialog} oncancel={(event) => { if (operating) event.preventDefault(); }}><div class="modal-top"><span class="modal-icon danger"><Trash2 size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => trashDialog.close()} disabled={operating}><X size={18} /></button></div><h2>{permanentDelete ? '永久删除？' : '移入回收站？'}</h2><p>{permanentDelete ? `将永久删除选中的 ${selected.size} 个项目，此操作无法撤销。` : `将选中的 ${selected.size} 个项目移入系统回收站。你可以稍后从系统回收站中恢复。`}</p><div class="modal-actions"><button class="button" onclick={() => trashDialog.close()} disabled={operating}>取消</button><button class="button danger-button" onclick={moveToTrash} disabled={busy}>{#if operating}<LoaderCircle size={16} class="spin" />{/if}{permanentDelete ? '永久删除' : '移入回收站'}</button></div></dialog>
 
+  <dialog class="modal settings-modal" bind:this={settingsDialog} aria-labelledby="settings-title">
+    <div class="modal-top"><span class="modal-icon"><Settings size={24} /></span><button class="icon-button" title="关闭设置" aria-label="关闭设置" onclick={() => settingsDialog.close()}><X size={18} /></button></div>
+    <h2 id="settings-title">设置</h2><p>调整文件浏览的外观与显示方式，修改会自动保存。</p>
+    <div class="settings-list">
+      <label class="settings-row"><span><strong>外观</strong><small>选择浅色或深色界面</small></span><select aria-label="外观" value={preferences.dark ? 'dark' : 'light'} onchange={(event) => preferences.dark = event.currentTarget.value === 'dark'}><option value="light">浅色</option><option value="dark">深色</option></select></label>
+      <label class="settings-row"><span><strong>显示方式</strong><small>选择文件的默认显示方式</small></span><select aria-label="显示方式" value={preferences.view} onchange={(event) => preferences.view = event.currentTarget.value as ViewMode}><option value="grid">图标</option><option value="list">列表</option></select></label>
+      <label class="settings-row"><span><strong>显示隐藏文件</strong><small>在文件夹中显示隐藏项目</small></span><input type="checkbox" bind:checked={preferences.hidden} /></label>
+      <label class="settings-row"><span><strong>显示信息面板</strong><small>显示所选项目的详细信息</small></span><input type="checkbox" bind:checked={preferences.inspector} /></label>
+      <label class="settings-row"><span><strong>图标大小</strong><small>调整图标视图中的项目大小</small></span><input type="range" min="104" max="168" step="1" bind:value={preferences.size} /></label>
+    </div>
+    <div class="modal-actions"><button class="button" onclick={() => settingsDialog.close()}>完成</button></div>
+  </dialog>
   <dialog class="modal help-modal" bind:this={helpDialog}><div class="modal-top"><span class="modal-icon"><Keyboard size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => helpDialog.close()}><X size={18} /></button></div><h2>键盘快捷键</h2><p>Pudding 0.1 · Tauri + Svelte</p><dl class="shortcut-list">{#each [[`${shortcutModifier} T / W`, '新建 / 关闭标签页'], [`${shortcutModifier} L`, '输入文件夹路径'], [`${shortcutModifier} F`, '搜索文件名或内容'], ['Alt ↑ / ← / →', '上一级 / 后退 / 前进'], ['鼠标侧键', '后退 / 前进'], [`${shortcutModifier} Shift N`, '新建文件夹'], [`${shortcutModifier} A`, '选择所有项目'], [`${shortcutModifier} C / X / V`, '复制 / 剪切 / 粘贴'], ['Space', '预览 / 关闭预览'], ['F2', '重命名'], ['Delete / Shift Delete', '移入回收站 / 永久删除'], ['F5', '刷新'], [`${shortcutModifier} Shift .`, '显示或隐藏隐藏文件']] as [keys, label]}<div><dt>{label}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{#if !desktop}<p class="help-demo">当前为浏览器演示。使用 <code>npm run tauri dev</code> 启动桌面版，管理真实文件。</p>{/if}</dialog>
 </div>
