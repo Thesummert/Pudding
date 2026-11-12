@@ -100,6 +100,7 @@ macOS 使用 Command，其他系统使用 Ctrl。
 | Ctrl / Command + Shift + . | 切换隐藏文件 |
 | F2 | 重命名 |
 | Delete | 移入回收站，需确认 |
+| Shift + Delete | 永久删除，需确认 |
 | Enter | 打开选中项目 |
 | Space | 预览选中的图片 |
 | ← / →、Esc（图片预览中） | 上一张 / 下一张、关闭预览 |

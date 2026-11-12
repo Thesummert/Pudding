@@ -46,6 +46,7 @@ export const api = {
   rename: (path: string, name: string) => call<string>('rename_entry', { path, name }),
   transfer: (paths: string[], destination: string, mode: 'copy' | 'cut') => call<string[]>('transfer_entries', { paths, destination, mode }),
   trash: (paths: string[]) => call<void>('trash_entries', { paths }),
+  delete: (paths: string[]) => call<void>('delete_entries', { paths }),
   open: (path: string) => call<void>('open_entry', { path }),
   image: async (path: string, extension: string): Promise<string> => {
     const bytes = await call<ArrayBuffer | number[]>('read_image', { path });

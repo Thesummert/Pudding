@@ -349,6 +349,46 @@ describe('file manager interactions', () => {
     expect(JSON.parse(localStorage.getItem('pudding.preferences')!)).toMatchObject({ hidden: true, view: 'list', dark: true });
   });
 
+  it('updates the context menu as Shift is pressed or released', async () => {
+    await contextMenu('开始使用.md');
+    expect(menuItem('移入回收站')).toBeTruthy();
+    button('开始使用.md').dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', shiftKey: true, bubbles: true }));
+    await tick();
+    expect(menuItem('永久删除').textContent).toContain('Shift Del');
+    button('开始使用.md').dispatchEvent(new KeyboardEvent('keyup', { key: 'Shift', bubbles: true }));
+    await tick();
+    expect(menuItem('移入回收站')).toBeTruthy();
+    button('开始使用.md').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, shiftKey: true }));
+    await tick();
+    await click(menuItem('永久删除'));
+    expect(host.querySelector('.trash-modal h2')?.textContent).toBe('永久删除？');
+  });
+
+  it('confirms permanent deletion with Shift and keeps ordinary deletion in the trash', async () => {
+    const permanentlyDelete = vi.spyOn(api, 'delete').mockResolvedValue();
+    const trash = vi.spyOn(api, 'trash').mockResolvedValue();
+    await click(button('开始使用.md'));
+    button('开始使用.md').dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', shiftKey: true, bubbles: true, cancelable: true }));
+    await tick();
+    expect(host.querySelector('.trash-modal h2')?.textContent).toBe('永久删除？');
+    expect(permanentlyDelete).not.toHaveBeenCalled();
+    await click(host.querySelector<HTMLButtonElement>('.trash-modal .danger-button')!);
+    await vi.waitFor(() => expect(permanentlyDelete).toHaveBeenCalledWith(['/home/pudding/开始使用.md']));
+    await vi.waitFor(() => expect(host.querySelector('.trash-modal[open]')).toBeNull());
+    expect(trash).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
+    await contextMenu('开始使用.md');
+    menuItem('移入回收站').dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+    await tick();
+    expect(host.querySelector('.trash-modal h2')?.textContent).toBe('永久删除？');
+    await click(host.querySelector<HTMLButtonElement>('.trash-modal .modal-actions .button')!);
+    await contextMenu('开始使用.md');
+    await click(menuItem('移入回收站'));
+    expect(host.querySelector('.trash-modal h2')?.textContent).toBe('移入回收站？');
+    await click(host.querySelector<HTMLButtonElement>('.trash-modal .danger-button')!);
+    await vi.waitFor(() => expect(trash).toHaveBeenCalledWith(['/home/pudding/开始使用.md']));
+  });
+
   it('creates, validates, renames, copies, cuts and trashes entries through the UI', async () => {
     await click(button('新建文件夹'));
     await submitName('集成测试文件夹');

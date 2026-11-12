@@ -108,7 +108,7 @@ export async function demoInvoke<T>(command: string, args: Record<string, unknow
       if (args.mode === 'cut') remove(path);
       return destination;
     });
-  } else if (command === 'trash_entries') {
+  } else if (command === 'trash_entries' || command === 'delete_entries') {
     for (const path of args.paths as string[]) remove(path);
     result = undefined;
   } else if (command === 'read_image') {

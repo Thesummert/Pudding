@@ -51,6 +51,7 @@
   let dropRegion = $state<'browser' | 'sidebar' | 'breadcrumbs' | null>(null);
   let dropMenu = $state<{ x: number; y: number; sources: string[]; destination: string } | null>(null);
   let dragModifiers = { ctrl: false, shift: false };
+  let shiftHeld = $state(false);
   let clipboardRequest = 0;
   let dragGesture: { x: number; y: number; entry: FileEntry; pointerId: number } | null = null;
   let demoDrag: string[] | null = null;
@@ -65,6 +66,7 @@
   let dialog = $state<{ mode: 'create' | 'rename'; entry?: FileEntry } | null>(null);
   let dialogError = $state('');
   let trashDialog: HTMLDialogElement;
+  let permanentDelete = $state(false);
   let helpDialog: HTMLDialogElement;
   let context = $state<{ x: number; y: number } | null>(null);
   let optionsOpen = $state(false);
@@ -455,8 +457,9 @@
     if (target) void chooseDrop(paths, target, { x: event.clientX, y: event.clientY }, { ctrl: event.ctrlKey, shift: event.shiftKey });
   }
 
-  function confirmTrash() {
+  function confirmTrash(permanent = false) {
     if (!selected.size || busy) return;
+    permanentDelete = permanent;
     context = null;
     trashDialog.showModal();
   }
@@ -466,10 +469,11 @@
     const paths = [...selected];
     operating = true;
     try {
-      await api.trash(paths);
+      if (permanentDelete) await api.delete(paths);
+      else await api.trash(paths);
       clipboard = null;
       selected = new Set();
-      notify(`已将 ${paths.length} 个项目移入回收站`);
+      notify(permanentDelete ? `已永久删除 ${paths.length} 个项目` : `已将 ${paths.length} 个项目移入回收站`);
     } catch (error) { notify(errorMessage(error), true); }
     finally {
       operating = false;
@@ -490,6 +494,7 @@
     event.preventDefault();
     event.stopPropagation();
     if (busy) return;
+    shiftHeld = event.shiftKey;
     if (entry && !selected.has(entry.path)) selected = new Set([entry.path]);
     if (!entry) selected = new Set();
     optionsOpen = false;
@@ -503,6 +508,7 @@
 
   function keydown(event: KeyboardEvent) {
     dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey };
+    shiftHeld = event.shiftKey;
     if (event.key === 'Escape') {
       dropMenu = null;
       context = null;
@@ -532,7 +538,7 @@
     else if (modifier && key === 'x') { event.preventDefault(); copySelection('cut'); }
     else if (modifier && key === 'v') { event.preventDefault(); void paste(); }
     else if (key === 'f2') { event.preventDefault(); openDialog('rename'); }
-    else if (key === 'delete') { event.preventDefault(); confirmTrash(); }
+    else if (key === 'delete') { event.preventDefault(); confirmTrash(event.shiftKey); }
     else if (event.code === 'Space' && focused && isImage(focused) && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); previewImage(focused); }
     else if (key === 'enter' && focused && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); void openEntry(focused); }
     else if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key) && entries.length && (target.closest('.file-area') || target === document.body)) {
@@ -548,7 +554,7 @@
   }
 </script>
 
-<svelte:window onfocus={() => void syncClipboard()} onpointermove={pointerMove} onpointerup={() => dragGesture = null} onpointercancel={() => dragGesture = null} ondragover={demoDragOver} ondrop={demoDrop} ondragend={() => { demoDrag = null; dropTarget = null; }} ondragleave={(event) => { if (!event.relatedTarget) dropTarget = null; }} onkeydown={keydown} onkeyup={(event) => dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey }} onclick={() => { context = null; optionsOpen = false; dropMenu = null; }} onblur={() => { context = null; optionsOpen = false; dragGesture = null; dropTarget = null; }} onresize={() => context = null} />
+<svelte:window onfocus={() => void syncClipboard()} onpointermove={pointerMove} onpointerup={() => dragGesture = null} onpointercancel={() => dragGesture = null} ondragover={demoDragOver} ondrop={demoDrop} ondragend={() => { demoDrag = null; dropTarget = null; }} ondragleave={(event) => { if (!event.relatedTarget) dropTarget = null; }} onkeydown={keydown} onkeyup={(event) => { dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey }; shiftHeld = event.shiftKey; }} onclick={() => { context = null; optionsOpen = false; dropMenu = null; }} onblur={() => { context = null; optionsOpen = false; dragGesture = null; dropTarget = null; shiftHeld = false; }} onresize={() => context = null} />
 
 <div class="app-shell" data-theme={preferences.dark ? 'dark' : 'light'}>
   <header class="app-header">
@@ -718,13 +724,13 @@
     <button role="menuitem" onclick={() => openDialog('create')}><FolderPlus size={16} /><span>新建文件夹</span></button>
     {#if selected.size === 1}<button role="menuitem" onclick={() => openDialog('rename')}><Pencil size={16} /><span>重命名</span><kbd>F2</kbd></button>{/if}
     <button role="menuitem" onclick={copyPath}><Link2 size={16} /><span>复制路径</span></button>
-    {#if selected.size}<div class="menu-divider"></div><button role="menuitem" class="danger-text" onclick={confirmTrash}><Trash2 size={16} /><span>移入回收站</span><kbd>Del</kbd></button>{/if}
+    {#if selected.size}<div class="menu-divider"></div><button role="menuitem" class="danger-text" onclick={(event) => confirmTrash(shiftHeld || event.shiftKey)}><Trash2 size={16} /><span>{shiftHeld ? '永久删除' : '移入回收站'}</span><kbd>{shiftHeld ? 'Shift Del' : 'Del'}</kbd></button>{/if}
   </div>{/if}
 
   {#if dialog}<NameDialog mode={dialog.mode} initial={dialog.mode === 'rename' ? dialog.entry?.name : ''} busy={operating} error={dialogError} onsubmit={submitName} onclose={() => { if (!operating) dialog = null; }} />{/if}
   {#if preview}<ImagePreviewDialog entries={entries.filter(isImage)} initial={preview} onclose={() => preview = null} onopen={openExternal} />{/if}
 
-  <dialog class="modal trash-modal" bind:this={trashDialog} oncancel={(event) => { if (operating) event.preventDefault(); }}><div class="modal-top"><span class="modal-icon danger"><Trash2 size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => trashDialog.close()} disabled={operating}><X size={18} /></button></div><h2>移入回收站？</h2><p>将选中的 {selected.size} 个项目移入系统回收站。你可以稍后从系统回收站中恢复。</p><div class="modal-actions"><button class="button" onclick={() => trashDialog.close()} disabled={operating}>取消</button><button class="button danger-button" onclick={moveToTrash} disabled={busy}>{#if operating}<LoaderCircle size={16} class="spin" />{/if}移入回收站</button></div></dialog>
+  <dialog class="modal trash-modal" bind:this={trashDialog} oncancel={(event) => { if (operating) event.preventDefault(); }}><div class="modal-top"><span class="modal-icon danger"><Trash2 size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => trashDialog.close()} disabled={operating}><X size={18} /></button></div><h2>{permanentDelete ? '永久删除？' : '移入回收站？'}</h2><p>{permanentDelete ? `将永久删除选中的 ${selected.size} 个项目，此操作无法撤销。` : `将选中的 ${selected.size} 个项目移入系统回收站。你可以稍后从系统回收站中恢复。`}</p><div class="modal-actions"><button class="button" onclick={() => trashDialog.close()} disabled={operating}>取消</button><button class="button danger-button" onclick={moveToTrash} disabled={busy}>{#if operating}<LoaderCircle size={16} class="spin" />{/if}{permanentDelete ? '永久删除' : '移入回收站'}</button></div></dialog>
 
-  <dialog class="modal help-modal" bind:this={helpDialog}><div class="modal-top"><span class="modal-icon"><Keyboard size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => helpDialog.close()}><X size={18} /></button></div><h2>键盘快捷键</h2><p>Pudding 0.1 · Tauri + Svelte</p><dl class="shortcut-list">{#each [[`${shortcutModifier} T / W`, '新建 / 关闭标签页'], [`${shortcutModifier} L`, '输入文件夹路径'], [`${shortcutModifier} F`, '搜索文件名或内容'], ['Alt ↑ / ← / →', '上一级 / 后退 / 前进'], [`${shortcutModifier} Shift N`, '新建文件夹'], [`${shortcutModifier} A`, '选择所有项目'], [`${shortcutModifier} C / X / V`, '复制 / 剪切 / 粘贴'], ['F2', '重命名'], ['Delete', '移入回收站'], ['F5', '刷新'], [`${shortcutModifier} Shift .`, '显示或隐藏隐藏文件']] as [keys, label]}<div><dt>{label}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{#if !desktop}<p class="help-demo">当前为浏览器演示。使用 <code>npm run tauri dev</code> 启动桌面版，管理真实文件。</p>{/if}</dialog>
+  <dialog class="modal help-modal" bind:this={helpDialog}><div class="modal-top"><span class="modal-icon"><Keyboard size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => helpDialog.close()}><X size={18} /></button></div><h2>键盘快捷键</h2><p>Pudding 0.1 · Tauri + Svelte</p><dl class="shortcut-list">{#each [[`${shortcutModifier} T / W`, '新建 / 关闭标签页'], [`${shortcutModifier} L`, '输入文件夹路径'], [`${shortcutModifier} F`, '搜索文件名或内容'], ['Alt ↑ / ← / →', '上一级 / 后退 / 前进'], [`${shortcutModifier} Shift N`, '新建文件夹'], [`${shortcutModifier} A`, '选择所有项目'], [`${shortcutModifier} C / X / V`, '复制 / 剪切 / 粘贴'], ['F2', '重命名'], ['Delete / Shift Delete', '移入回收站 / 永久删除'], ['F5', '刷新'], [`${shortcutModifier} Shift .`, '显示或隐藏隐藏文件']] as [keys, label]}<div><dt>{label}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{#if !desktop}<p class="help-demo">当前为浏览器演示。使用 <code>npm run tauri dev</code> 启动桌面版，管理真实文件。</p>{/if}</dialog>
 </div>

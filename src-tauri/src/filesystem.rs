@@ -353,6 +353,40 @@ pub fn trash_entries(paths: Vec<String>) -> Result<()> {
     trash::delete_all(&checked).map_err(|e| format!("无法移入回收站：{e}。请刷新确认项目状态"))
 }
 
+pub fn delete_entries(paths: Vec<String>) -> Result<()> {
+    if paths.is_empty() {
+        return Err("请选择要永久删除的项目".into());
+    }
+    let checked: Vec<_> = paths
+        .iter()
+        .map(|p| checked_source(p))
+        .collect::<Result<_>>()?;
+    for (index, path) in checked.iter().enumerate() {
+        let result = (|| {
+            let metadata = fs::symlink_metadata(path)?;
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::FileTypeExt;
+                if metadata.file_type().is_symlink_dir() {
+                    return fs::remove_dir(path);
+                }
+            }
+            if metadata.is_dir() && !metadata.is_symlink() {
+                fs::remove_dir_all(path)
+            } else {
+                fs::remove_file(path)
+            }
+        })();
+        if let Err(error) = result {
+            return Err(format!(
+                "{}。已永久删除 {index} 个项目，请刷新确认项目状态",
+                io_error("无法永久删除", path, error)
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn openable_path(path: &str) -> Result<String> {
     let path = checked_source(path)?;
     Ok(display(&path))
@@ -396,6 +430,38 @@ pub fn read_image(path: &str) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn permanently_deletes_files_and_directories_after_validating_all_paths() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("file");
+        let folder = dir.path().join("folder");
+        fs::write(&file, "data").unwrap();
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("nested"), "data").unwrap();
+        assert!(
+            delete_entries(vec![display(&file), display(&dir.path().join("missing"))]).is_err()
+        );
+        assert!(file.exists());
+        assert!(delete_entries(vec!["/".into()]).is_err());
+        delete_entries(vec![display(&file), display(&folder)]).unwrap();
+        assert!(!file.exists());
+        assert!(!folder.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn permanently_deleting_a_symlink_preserves_its_target() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("target");
+        let link = dir.path().join("link");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("file"), "data").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        delete_entries(vec![display(&link)]).unwrap();
+        assert!(target.join("file").exists());
+        assert!(fs::symlink_metadata(link).is_err());
+    }
 
     #[test]
     fn reads_image_bytes_and_rejects_unsupported_or_missing_files() {

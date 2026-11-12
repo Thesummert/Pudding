@@ -174,6 +174,11 @@ async fn trash_entries(paths: Vec<String>) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn delete_entries(paths: Vec<String>) -> Result<(), String> {
+    blocking(move || filesystem::delete_entries(paths)).await
+}
+
+#[tauri::command]
 async fn open_entry(app: tauri::AppHandle, path: String) -> Result<(), String> {
     let path = blocking(move || filesystem::openable_path(&path)).await?;
     app.opener()
@@ -263,6 +268,7 @@ pub fn run() {
             rename_entry,
             transfer_entries,
             trash_entries,
+            delete_entries,
             open_entry,
             read_file_clipboard,
             write_file_clipboard,
