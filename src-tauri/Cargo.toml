@@ -1,0 +1,30 @@
+[package]
+name = "pudding"
+version = "0.1.0"
+description = "A thoughtful cross-platform file manager"
+authors = ["Pudding contributors"]
+edition = "2021"
+rust-version = "1.90"
+
+[lib]
+name = "pudding_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+dirs = "6"
+trash = "5"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+tempfile = "3"
