@@ -138,7 +138,7 @@ kbd { font-family: inherit; font-size: 10px; font-weight: 450; white-space: nowr
 .search-box kbd { border: 1px solid var(--line-strong); border-radius: 4px; padding: 1px 4px; font-size: 9px; background: var(--surface); }
 .clear-search { padding: 2px; color: var(--muted); display: flex; }
 .content-layout { display: flex; flex: 1; min-height: 0; }
-.browser { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.browser { position: relative; display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .folder-heading { padding: 29px 29px 24px; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .eyebrow { color: var(--muted); font-size: 9px; letter-spacing: 1.4px; font-weight: 500; }
 .eyebrow span { margin: 0 6px; color: var(--line-strong); }
@@ -379,3 +379,7 @@ h1 { margin: 9px 0 7px; font-size: 27px; color: var(--heading); letter-spacing: 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+/* Native and demo drops share the same visible destinations. */
+.drop-target { outline: 2px solid var(--accent, #5685df); outline-offset: -3px; background-color: rgba(86, 133, 223, .12) !important; }
+.drop-hint { position: absolute; bottom: 52px; left: 24px; right: 24px; z-index: 5; padding: 10px 16px; border: 1px solid var(--accent-line); border-radius: 8px; color: var(--accent); background: var(--surface); box-shadow: 0 3px 15px #0001; font-size: 12px; pointer-events: none; }
+.file-card[draggable="false"], .file-row[draggable="false"], .file-card img, .file-row img { -webkit-user-drag: none; }

@@ -9,6 +9,8 @@
   import { api, desktop } from './lib/api';
   import { basename, breadcrumbs, fileKind, formatDate, formatSize, isImage, visibleEntries } from './lib/files';
   import type { AppInfo, Clipboard, DirectoryListing, FileEntry, SortKey, ViewMode } from './lib/types';
+  import type { DragDropEvent } from '@tauri-apps/api/webview';
+  import { dragClientPosition } from './lib/drag';
 
   type Preferences = { view: ViewMode; hidden: boolean; inspector: boolean; size: number; dark: boolean };
   function loadPreferences(): Preferences {
@@ -33,6 +35,11 @@
   let history = $state<string[]>([]);
   let historyIndex = $state(-1);
   let clipboard = $state<Clipboard>(null);
+  let dropTarget = $state<string | null>(null);
+  let dropRegion = $state<'browser' | 'sidebar' | 'breadcrumbs' | null>(null);
+  let clipboardRequest = 0;
+  let dragGesture: { x: number; y: number; entry: FileEntry; pointerId: number } | null = null;
+  let demoDrag: string[] | null = null;
   let editingAddress = $state(false);
   let address = $state('');
   let addressInput = $state<HTMLInputElement>();
@@ -77,7 +84,13 @@
 
   onMount(() => {
     void initialize();
-    return () => { request += 1; clearTimeout(noticeTimeout); };
+    void syncClipboard();
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void api.listenDrop(nativeDrop).then((cleanup) => {
+      if (disposed) cleanup(); else unlisten = cleanup;
+    }).catch((error) => notify(errorMessage(error), true));
+    return () => { disposed = true; unlisten?.(); clipboardRequest += 1; request += 1; clearTimeout(noticeTimeout); };
   });
 
   function notify(text: string, error = false) {
@@ -206,32 +219,135 @@
     finally { operating = false; }
   }
 
-  function copySelection(mode: 'copy' | 'cut') {
+  async function syncClipboard() {
+    const id = ++clipboardRequest;
+    try {
+      const value = await api.readClipboard();
+      if (id === clipboardRequest) clipboard = value;
+    } catch { if (id === clipboardRequest) clipboard = null; }
+  }
+
+  async function cancelClipboard() {
+    if (!clipboard || busy) return;
+    const expected = $state.snapshot(clipboard);
+    ++clipboardRequest;
+    try { await api.clearClipboard(expected); await syncClipboard(); }
+    catch (error) { notify(errorMessage(error), true); }
+  }
+
+  async function copySelection(mode: 'copy' | 'cut') {
     if (!selected.size || busy) return;
-    clipboard = { paths: [...selected], mode };
+    const operation = { paths: [...selected], mode };
     context = null;
-    notify(`已${mode === 'cut' ? '剪切' : '复制'} ${selected.size} 个项目，请到目标文件夹粘贴`);
+    operating = true;
+    ++clipboardRequest;
+    try {
+      await api.writeClipboard(operation);
+      clipboard = operation;
+      notify(`已${mode === 'cut' ? '剪切' : '复制'} ${operation.paths.length} 个项目，请到目标文件夹粘贴`);
+    } catch (error) { notify(errorMessage(error), true); }
+    finally { operating = false; }
   }
 
   async function paste() {
-    if (!clipboard || !directory || busy) return;
+    if (!directory || busy) return;
     context = null;
-    const operation = clipboard;
+    operating = true;
+    const destination = directory.path;
+    let paths: string[] = [];
+    try {
+      // Read at paste time so external changes never use stale paths.
+      const operation = await api.readClipboard();
+      clipboard = operation;
+      if (!operation) { notify('剪贴板中没有可粘贴的文件'); return; }
+      try {
+        paths = await api.transfer([...operation.paths], destination, operation.mode);
+        notify(`已${operation.mode === 'cut' ? '移动' : '复制'} ${paths.length} 个项目`);
+      } finally {
+        // A batch may partially succeed. Clear stale cut paths only if the
+        // clipboard has not been replaced by another application.
+        if (operation.mode === 'cut') await api.clearClipboard(operation);
+      }
+    } catch (error) {
+      notify(errorMessage(error), true);
+    } finally {
+      await syncClipboard();
+      operating = false;
+      await navigate(destination, undefined, true);
+      if (paths.length) selected = new Set(paths);
+    }
+  }
+
+  function dropPath(x: number, y: number): string | null {
+    dropRegion = null;
+    if (busy || preview || document.querySelector('dialog[open]')) return null;
+    const target = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-drop-path]');
+    if (!target) return null;
+    dropRegion = target.closest('.places') ? 'sidebar' : target.closest('.breadcrumbs') ? 'breadcrumbs' : 'browser';
+    return target.dataset.dropPath ?? null;
+  }
+
+  function nativeDrop(event: DragDropEvent) {
+    if (event.type === 'leave') { dropTarget = null; return; }
+    const position = dragClientPosition(event.position, info?.platform ?? '', window.devicePixelRatio);
+    const target = dropPath(position.x, position.y);
+    dropTarget = event.type === 'drop' ? null : target;
+    if (event.type === 'drop' && target) void receiveDrop(event.paths, target);
+  }
+
+  async function receiveDrop(sources: string[], destination: string) {
+    if (!sources.length || !directory || busy) return;
+    const current = directory.path;
     operating = true;
     let paths: string[] = [];
     try {
-      paths = await api.transfer([...operation.paths], directory.path, operation.mode);
-      if (operation.mode === 'cut') clipboard = null;
-      notify(`已${operation.mode === 'cut' ? '移动' : '复制'} ${paths.length} 个项目`);
-    } catch (error) {
-      // A batch can partially succeed; discard a cut operation rather than retry stale paths.
-      if (operation.mode === 'cut') clipboard = null;
-      notify(errorMessage(error), true);
-    } finally {
+      paths = await api.transfer(sources, destination, 'copy');
+      notify(`已复制 ${paths.length} 个项目到「${basename(destination) || destination}」`);
+    } catch (error) { notify(errorMessage(error), true); }
+    finally {
       operating = false;
-      await navigate(directory.path, undefined, true);
-      if (paths.length) selected = new Set(paths);
+      await navigate(current, undefined, true);
+      if (destination === current && paths.length) selected = new Set(paths);
     }
+  }
+
+  function beginDrag(event: PointerEvent, entry: FileEntry) {
+    if (desktop && event.button === 0 && !busy) dragGesture = { x: event.clientX, y: event.clientY, entry, pointerId: event.pointerId };
+  }
+
+  function pointerMove(event: PointerEvent) {
+    const gesture = dragGesture;
+    if (!gesture || event.pointerId !== gesture.pointerId) return;
+    if (!(event.buttons & 1) || busy) { dragGesture = null; return; }
+    if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) < 6) return;
+    dragGesture = null;
+    if (!selected.has(gesture.entry.path)) selected = new Set([gesture.entry.path]);
+    void api.startDrag([...selected]).catch((error) => notify(errorMessage(error), true));
+  }
+
+  function demoDragStart(event: DragEvent, entry: FileEntry) {
+    if (desktop || busy) { event.preventDefault(); return; }
+    if (!selected.has(entry.path)) selected = new Set([entry.path]);
+    demoDrag = [...selected];
+    event.dataTransfer?.setData('application/x-pudding-files', JSON.stringify(demoDrag));
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
+  }
+
+  function demoDragOver(event: DragEvent) {
+    if (!demoDrag) return;
+    const target = dropPath(event.clientX, event.clientY);
+    dropTarget = target;
+    if (target) { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'; }
+  }
+
+  function demoDrop(event: DragEvent) {
+    if (!demoDrag) return;
+    event.preventDefault();
+    const target = dropPath(event.clientX, event.clientY);
+    const paths = demoDrag;
+    demoDrag = null;
+    dropTarget = null;
+    if (target) void receiveDrop(paths, target);
   }
 
   function confirmTrash() {
@@ -261,7 +377,7 @@
     context = null;
     const path = selectedEntries.length ? selectedEntries.map((e) => e.path).join('\n') : directory?.path;
     if (!path) return;
-    try { await navigator.clipboard.writeText(path); notify('路径已复制到剪贴板'); }
+    try { await api.writeText(path); await syncClipboard(); notify('路径已复制到剪贴板'); }
     catch { notify('无法访问系统剪贴板，可在地址栏中手动复制路径。', true); }
   }
 
@@ -323,7 +439,7 @@
   }
 </script>
 
-<svelte:window onkeydown={keydown} onclick={() => { context = null; optionsOpen = false; }} onblur={() => { context = null; optionsOpen = false; }} onresize={() => context = null} />
+<svelte:window onfocus={() => void syncClipboard()} onpointermove={pointerMove} onpointerup={() => dragGesture = null} onpointercancel={() => dragGesture = null} ondragover={demoDragOver} ondrop={demoDrop} ondragend={() => { demoDrag = null; dropTarget = null; }} ondragleave={(event) => { if (!event.relatedTarget) dropTarget = null; }} onkeydown={keydown} onclick={() => { context = null; optionsOpen = false; }} onblur={() => { context = null; optionsOpen = false; dragGesture = null; dropTarget = null; }} onresize={() => context = null} />
 
 <div class="app-shell" data-theme={preferences.dark ? 'dark' : 'light'}>
   <header class="app-header">
@@ -346,7 +462,7 @@
         <nav class="places" aria-label="常用位置">
           {#each info?.places ?? [] as place}
             {@const PlaceIcon = placeIcons[place.id] ?? Folder}
-            <button class:active={directory?.path === place.path} onclick={() => navigate(place.path)} disabled={operating} aria-current={directory?.path === place.path ? 'page' : undefined} title={place.path}><PlaceIcon size={18} strokeWidth={1.8} /><span>{place.name}</span>{#if place.id === 'home'}<span class="home-key">⌂</span>{/if}</button>
+            <button data-drop-path={place.path} class:drop-target={dropRegion === 'sidebar' && dropTarget === place.path} class:active={directory?.path === place.path} onclick={() => navigate(place.path)} disabled={operating} aria-current={directory?.path === place.path ? 'page' : undefined} title={place.path}><PlaceIcon size={18} strokeWidth={1.8} /><span>{place.name}</span>{#if place.id === 'home'}<span class="home-key">⌂</span>{/if}</button>
           {/each}
           {#if !info}{#each Array(7) as _}<div class="sidebar-skeleton"></div>{/each}{/if}
         </nav>
@@ -354,7 +470,7 @@
         <div class="section-label">设备与磁盘<span>DEVICES</span></div>
         <nav class="places devices" aria-label="设备与磁盘">
           {#each info?.roots ?? [] as root}
-            <button class:active={directory?.path === root.path} onclick={() => navigate(root.path)} disabled={operating} title={root.path}><HardDrive size={18} strokeWidth={1.8} /><span>{root.name}</span></button>
+            <button data-drop-path={root.path} class:drop-target={dropRegion === 'sidebar' && dropTarget === root.path} class:active={directory?.path === root.path} onclick={() => navigate(root.path)} disabled={operating} title={root.path}><HardDrive size={18} strokeWidth={1.8} /><span>{root.name}</span></button>
           {/each}
         </nav>
         <div class="sidebar-note"><span class="note-icon"><Folder size={19} strokeWidth={1.5} /></span><p>给每一份灵感<br />一个妥帖的位置。</p><span class="note-line"></span></div>
@@ -377,7 +493,7 @@
             <nav class="breadcrumbs" aria-label="路径导航">
               {#each crumbs as crumb, index}
                 {#if index > 0}<ChevronRight size={13} />{/if}
-                <button disabled={busy} class:current={index === crumbs.length - 1} onclick={() => navigate(crumb.path)} title={crumb.path}>{info?.places.find((p) => p.path === crumb.path)?.name ?? crumb.name}</button>
+                <button data-drop-path={crumb.path} class:drop-target={dropRegion === 'breadcrumbs' && dropTarget === crumb.path} disabled={busy} class:current={index === crumbs.length - 1} onclick={() => navigate(crumb.path)} title={crumb.path}>{info?.places.find((p) => p.path === crumb.path)?.name ?? crumb.name}</button>
               {/each}
             </nav>
             <button class="address-edit" title={`编辑路径 (${shortcutModifier}+L)`} aria-label="编辑路径" onclick={editAddress} disabled={!directory}><Pencil size={13} /></button>
@@ -388,7 +504,7 @@
       </div>
 
       <div class="content-layout">
-        <section class="browser" aria-label="文件浏览器">
+        <section class="browser" aria-label="文件浏览器" data-drop-path={directory?.path}>
           <div class="folder-heading">
             <div class="folder-title"><span class="eyebrow">我的空间 <span>/</span> {currentPlace?.id === 'home' ? 'HOME' : 'FILES'}</span><h1>{title}<span class="heading-dot">.</span></h1><p>{query ? `“${query}” 的筛选结果` : '让每个文件，都在合适的地方。'}</p></div>
             <button class="button primary create-button" onclick={() => openDialog('create')} disabled={busy || !directory}><FolderPlus size={17} />新建文件夹</button>
@@ -407,9 +523,11 @@
             </div>
           </div>
 
-          {#if clipboard}<div class="clipboard-strip">{#if clipboard.mode === 'copy'}<Copy size={14} />{:else}<Scissors size={14} />{/if}<span>{clipboard.paths.length} 个项目等待{clipboard.mode === 'cut' ? '移动' : '复制'}</span><button onclick={paste} disabled={busy}>粘贴到此处 <ClipboardPaste size={13} /></button><button class="icon-button" title="取消剪贴操作" aria-label="取消剪贴操作" onclick={() => clipboard = null} disabled={operating}><X size={13} /></button></div>{/if}
+          {#if clipboard}<div class="clipboard-strip">{#if clipboard.mode === 'copy'}<Copy size={14} />{:else}<Scissors size={14} />{/if}<span>{clipboard.paths.length} 个项目等待{clipboard.mode === 'cut' ? '移动' : '复制'}</span><button onclick={paste} disabled={busy}>粘贴到此处 <ClipboardPaste size={13} /></button><button class="icon-button" title="取消剪贴操作" aria-label="取消剪贴操作" onclick={cancelClipboard} disabled={operating}><X size={13} /></button></div>{/if}
 
-          <div class="file-area" class:loading class:list-view={preferences.view === 'list'} bind:this={fileArea} role="group" aria-label="文件和文件夹" aria-busy={busy} oncontextmenu={(event) => contextMenu(event)}>
+          {#if dropTarget}<div class="drop-hint" role="status">松开以复制到「{basename(dropTarget) || dropTarget}」</div>{/if}
+
+          <div class="file-area" data-drop-path={directory?.path} class:drop-target={dropRegion === 'browser' && dropTarget === directory?.path} class:loading class:list-view={preferences.view === 'list'} bind:this={fileArea} role="group" aria-label="文件和文件夹" aria-busy={busy} oncontextmenu={(event) => contextMenu(event)}>
             {#if initialError}
               <div class="empty-state"><span class="empty-icon error"><CircleAlert size={34} strokeWidth={1.3} /></span><h2>暂时无法打开文件夹</h2><p>{initialError}</p><button class="button" onclick={() => info ? navigate(info.home) : initialize()}><RotateCw size={15} />重新尝试</button></div>
             {:else if !directory && loading}
@@ -419,7 +537,7 @@
             {:else if preferences.view === 'grid'}
               <div class="file-grid" style={`--cell-size: ${preferences.size}px`}>
                 {#each entries as entry, index (entry.path)}
-                  <button class="file-card" class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} title={`${entry.name}\n${entry.isDir ? '文件夹' : formatSize(entry.size)}\n双击打开`} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
+                  <button class="file-card" draggable={!desktop && !busy} onpointerdown={(event) => beginDrag(event, entry)} ondragstart={(event) => demoDragStart(event, entry)} data-drop-path={entry.isDir ? entry.path : undefined} class:drop-target={dropRegion === 'browser' && dropTarget === entry.path} class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} title={`${entry.name}\n${entry.isDir ? '文件夹' : formatSize(entry.size)}\n双击打开`} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
                     {#if selected.has(entry.path)}<span class="selected-check"><Check size={10} strokeWidth={3} /></span>{/if}
                     <span class="file-visual">{#if isImage(entry)}<FileThumbnail {entry} large />{:else}<FileIcon {entry} large />{/if}</span>
                     <span class="file-name">{entry.name}</span><span class="file-caption">{entry.isDir ? folderLabels[entry.name] ?? '文件夹' : formatSize(entry.size)}</span>
@@ -430,7 +548,7 @@
               <div class="list-header"><button onclick={() => setSort('name')}>名称{#if sort === 'name'}{#if descending}<ChevronDown size={13} />{:else}<ArrowUp size={12} />{/if}{/if}</button><button onclick={() => setSort('modified')}>修改时间</button><button onclick={() => setSort('type')}>类型</button><button onclick={() => setSort('size')}>大小</button></div>
               <div class="file-list">
                 {#each entries as entry, index (entry.path)}
-                  <button class="file-row" class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
+                  <button class="file-row" draggable={!desktop && !busy} onpointerdown={(event) => beginDrag(event, entry)} ondragstart={(event) => demoDragStart(event, entry)} data-drop-path={entry.isDir ? entry.path : undefined} class:drop-target={dropRegion === 'browser' && dropTarget === entry.path} class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
                     <span class="row-name">{#if isImage(entry)}<FileThumbnail {entry} />{:else}<FileIcon {entry} />{/if}<span>{entry.name}</span></span><span class="row-date">{formatDate(entry.modified)}</span><span class="row-type">{fileKind(entry)}</span><span class="row-size">{entry.isDir ? '—' : formatSize(entry.size)}</span>
                   </button>
                 {/each}
@@ -469,7 +587,7 @@
     {#if focused && isImage(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览图片</span><kbd>Space</kbd></button><button role="menuitem" onclick={() => { context = null; void openExternal(focused!); }}><ExternalLink size={16} /><span>使用默认应用打开</span></button>{/if}
     {#if focused && !isImage(focused)}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>打开</span><kbd>Enter</kbd></button>{/if}
     {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{shortcutModifier} C</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{shortcutModifier} X</kbd></button>{/if}
-    <button role="menuitem" onclick={paste} disabled={!clipboard}><ClipboardPaste size={16} /><span>粘贴</span><kbd>{shortcutModifier} V</kbd></button>
+    <button role="menuitem" onclick={paste} disabled={busy || (!desktop && !clipboard)}><ClipboardPaste size={16} /><span>粘贴</span><kbd>{shortcutModifier} V</kbd></button>
     <div class="menu-divider"></div>
     <button role="menuitem" onclick={() => openDialog('create')}><FolderPlus size={16} /><span>新建文件夹</span></button>
     {#if selected.size === 1}<button role="menuitem" onclick={() => openDialog('rename')}><Pencil size={16} /><span>重命名</span><kbd>F2</kbd></button>{/if}

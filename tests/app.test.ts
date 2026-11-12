@@ -2,9 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import App from '../src/App.svelte';
 import { api } from '../src/lib/api';
+import type { DragDropEvent } from '@tauri-apps/api/webview';
+import { PhysicalPosition } from '@tauri-apps/api/dpi';
 
 let app: ReturnType<typeof mount>;
 let host: HTMLDivElement;
+let nativeDrop: (event: DragDropEvent) => void;
+let stopDrop: ReturnType<typeof vi.fn>;
 
 function button(name: string): HTMLButtonElement {
   const element = [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) => (b.getAttribute('aria-label') ?? b.textContent?.trim()) === name);
@@ -49,6 +53,13 @@ async function submitName(value: string) {
 
 beforeEach(async () => {
   localStorage.clear();
+  const clipboard = await api.readClipboard();
+  if (clipboard) await api.clearClipboard(clipboard);
+  stopDrop = vi.fn();
+  vi.spyOn(api, 'listenDrop').mockImplementation(async (handler) => {
+    nativeDrop = handler;
+    return stopDrop;
+  });
   host = document.createElement('div');
   document.body.append(host);
   app = mount(App, { target: host });
@@ -61,9 +72,122 @@ afterEach(async () => {
   await unmount(app);
   host.remove();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('file manager interactions', () => {
+  it('keeps Retina macOS drops in the middle pane instead of hitting the sidebar', async () => {
+    const info = await api.info();
+    vi.spyOn(api, 'info').mockResolvedValue({ ...info, platform: 'macos' });
+    vi.stubGlobal('devicePixelRatio', 2);
+    await unmount(app);
+    app = mount(App, { target: host });
+    flushSync();
+    await vi.waitFor(() => expect(button('Documents')).toBeTruthy());
+    expect(window.devicePixelRatio).toBe(2);
+    const transfer = vi.spyOn(api, 'transfer').mockResolvedValue([]);
+    // The old extra division mapped x=400 to x=200 in the sidebar.
+    const hit = vi.spyOn(document, 'elementFromPoint').mockImplementation((x, y) => {
+      if (x < 220) return host.querySelector('.places button');
+      return y > 350 ? button('Documents').querySelector('span') : host.querySelector('.file-area');
+    });
+    nativeDrop({ type: 'enter', position: new PhysicalPosition(400, 300), paths: ['/tmp/空白落点.txt'] });
+    await tick();
+    expect(host.querySelector('.file-area.drop-target')).not.toBeNull();
+    expect(host.querySelector('.places .drop-target')).toBeNull();
+    nativeDrop({ type: 'drop', position: new PhysicalPosition(400, 300), paths: ['/tmp/空白落点.txt'] });
+    await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith(['/tmp/空白落点.txt'], '/home/pudding', 'copy'));
+    await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
+    nativeDrop({ type: 'drop', position: new PhysicalPosition(450, 400), paths: ['/tmp/文件夹落点.txt'] });
+    await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith(['/tmp/文件夹落点.txt'], '/home/pudding/Documents', 'copy'));
+    expect(hit).toHaveBeenCalledWith(400, 300);
+    expect(hit).toHaveBeenCalledWith(450, 400);
+    await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
+  });
+
+  it('reads fresh clipboard contents at paste time and reports failed clipboard writes', async () => {
+    await contextMenu('开始使用.md');
+    vi.spyOn(api, 'writeClipboard').mockRejectedValueOnce(new Error('系统剪贴板不可用'));
+    await click(menuItem('剪切'));
+    await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain('系统剪贴板不可用'));
+    expect(host.querySelector('.clipboard-strip')).toBeNull();
+    await contextMenu('开始使用.md');
+    await click(menuItem('复制'));
+    await vi.waitFor(() => expect(host.querySelector('.clipboard-strip')).not.toBeNull());
+    await doubleClick('Documents');
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    vi.spyOn(api, 'readClipboard').mockResolvedValue({ paths: ['/home/pudding/灵感笔记.txt'], mode: 'copy' });
+    const transfer = vi.spyOn(api, 'transfer');
+    await click(host.querySelector<HTMLButtonElement>('.clipboard-strip > button')!);
+    await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith(['/home/pudding/灵感笔记.txt'], '/home/pudding/Documents', 'copy'));
+    await vi.waitFor(() => expect(button('灵感笔记.txt')).toBeTruthy());
+    expect([...host.querySelectorAll('.file-card')].some((b) => b.getAttribute('aria-label') === '开始使用.md')).toBe(false);
+  });
+
+  it('does not clear a newer clipboard after a partially failed cut', async () => {
+    await api.writeClipboard({ paths: ['/home/pudding/开始使用.md'], mode: 'cut' });
+    window.dispatchEvent(new Event('focus'));
+    await vi.waitFor(() => expect(host.querySelector('.clipboard-strip')).not.toBeNull());
+    await doubleClick('Downloads');
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('下载.'));
+    const newer = { paths: ['/home/pudding/灵感笔记.txt'], mode: 'copy' as const };
+    vi.spyOn(api, 'transfer').mockImplementationOnce(async () => {
+      await api.writeClipboard(newer);
+      throw new Error('已完成 1 个项目');
+    });
+    await click(host.querySelector<HTMLButtonElement>('.clipboard-strip > button')!);
+    await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain('已完成 1 个项目'));
+    expect(await api.readClipboard()).toEqual(newer);
+    await vi.waitFor(() => expect(host.querySelector('.clipboard-strip')?.textContent).toContain('等待复制'));
+  });
+
+  it.each(['grid', 'list'])('routes native drops to folders, places and blank space in %s view', async (view) => {
+    if (view === 'list') await click(button('列表视图'));
+    const transfer = vi.spyOn(api, 'transfer').mockResolvedValue([]);
+    const hit = vi.spyOn(document, 'elementFromPoint').mockReturnValue(button('Documents').querySelector('span'));
+    const position = new PhysicalPosition(200, 240);
+    nativeDrop({ type: 'enter', position, paths: ['/tmp/外部文件.txt'] });
+    await tick();
+    expect(button('Documents').classList.contains('drop-target')).toBe(true);
+    expect(hit).toHaveBeenCalledWith(200 / window.devicePixelRatio, 240 / window.devicePixelRatio);
+    nativeDrop({ type: 'drop', position, paths: ['/tmp/外部文件.txt'] });
+    await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith(['/tmp/外部文件.txt'], '/home/pudding/Documents', 'copy'));
+    await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
+    expect(host.querySelector('.drop-hint')).toBeNull();
+    hit.mockReturnValue(host.querySelector('[data-drop-path="/home/pudding/Downloads"]'));
+    nativeDrop({ type: 'drop', position, paths: ['/tmp/第二项'] });
+    await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith(['/tmp/第二项'], '/home/pudding/Downloads', 'copy'));
+    await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
+    hit.mockReturnValue(button('开始使用.md'));
+    nativeDrop({ type: 'drop', position, paths: ['/tmp/第三项'] });
+    await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith(['/tmp/第三项'], '/home/pudding', 'copy'));
+    await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
+    // Both whitespace between entries and the surrounding middle pane use
+    // the currently open directory, while a folder's children take priority.
+    for (const selector of ['.file-area', '.folder-heading']) {
+      hit.mockReturnValue(host.querySelector(selector));
+      nativeDrop({ type: 'over', position });
+      await tick();
+      expect(host.querySelector('.file-area')?.classList.contains('drop-target')).toBe(true);
+      nativeDrop({ type: 'drop', position, paths: [`/tmp/${selector}`] });
+      await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith([`/tmp/${selector}`], '/home/pudding', 'copy'));
+      await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
+    }
+    hit.mockReturnValue(host.querySelector('.app-header'));
+    nativeDrop({ type: 'drop', position, paths: ['/tmp/忽略'] });
+    expect(transfer).toHaveBeenCalledTimes(5);
+    nativeDrop({ type: 'leave' });
+    await tick();
+    expect(host.querySelector('.drop-target')).toBeNull();
+  });
+
+  it('removes the native drop listener on unmount', async () => {
+    await unmount(app);
+    expect(stopDrop).toHaveBeenCalledOnce();
+    app = mount(App, { target: host });
+    await tick();
+  });
+
   it('previews images in the inspector and dialog without launching an external app', async () => {
     const open = vi.spyOn(api, 'open');
     await doubleClick('Pictures');

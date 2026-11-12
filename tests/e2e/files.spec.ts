@@ -172,3 +172,17 @@ test('preview zooms with the wheel, pans with the left button and closes outside
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole('button', { name: '海岸.svg', exact: true })).toBeFocused();
 });
+
+test('drags a selection into a folder and a sidebar place', async ({ page }) => {
+  await page.getByRole('button', { name: '开始使用.md', exact: true }).dragTo(page.getByRole('button', { name: 'Documents', exact: true }));
+  await expect(page.getByRole('status')).toContainText('已复制 1 个项目');
+  await page.getByRole('button', { name: 'Documents', exact: true }).dblclick();
+  await expect(page.getByRole('heading', { name: '文档.' })).toBeVisible();
+  const copy = page.getByRole('button', { name: '开始使用.md', exact: true });
+  await expect(copy).toBeVisible();
+  await page.getByRole('button', { name: '列表视图', exact: true }).click();
+  await copy.dragTo(page.getByRole('navigation', { name: '常用位置' }).getByRole('button', { name: '下载', exact: true }));
+  await expect(page.getByRole('status')).toContainText('到「Downloads」');
+  await page.getByRole('navigation', { name: '常用位置' }).getByRole('button', { name: '下载', exact: true }).click();
+  await expect(page.getByRole('button', { name: '开始使用.md', exact: true })).toBeVisible();
+});
