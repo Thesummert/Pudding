@@ -78,6 +78,32 @@ pub fn resolve_directory(path: &str) -> Result<PathBuf> {
     Ok(canonical)
 }
 
+// Count file contents only, without following nested symbolic links.
+pub fn directory_size(path: &str) -> Result<u64> {
+    let root = resolve_directory(path)?;
+    let mut pending = vec![root];
+    let mut total = 0u64;
+    while let Some(directory) = pending.pop() {
+        for item in fs::read_dir(&directory).map_err(|e| io_error("无法读取", &directory, e))? {
+            let item = item.map_err(|e| io_error("无法读取", &directory, e))?;
+            let path = item.path();
+            let metadata =
+                fs::symlink_metadata(&path).map_err(|e| io_error("无法读取", &path, e))?;
+            if metadata.is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if metadata.is_file() {
+                total = total
+                    .checked_add(metadata.len())
+                    .ok_or("文件夹大小超出计算范围")?;
+            }
+        }
+    }
+    Ok(total)
+}
+
 pub fn app_info() -> Result<AppInfo> {
     let home = dirs::home_dir().ok_or("无法定位主文件夹")?;
     let candidates = [
@@ -680,5 +706,21 @@ mod tests {
         assert!(transfer_entries(vec![display(&source)], &display(&target), "copy").is_err());
         assert!(!target.join("source").exists());
         assert!(fs::symlink_metadata(source.join("broken")).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod directory_size_tests {
+    use super::*;
+
+    #[test]
+    fn counts_nested_files_without_following_links() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("nested")).unwrap();
+        fs::write(root.path().join("a"), b"123").unwrap();
+        fs::write(root.path().join("nested/b"), b"12345").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.path(), root.path().join("nested/link")).unwrap();
+        assert_eq!(directory_size(root.path().to_str().unwrap()).unwrap(), 8);
     }
 }

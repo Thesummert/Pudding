@@ -190,6 +190,11 @@ fn set_window_directory(
 }
 
 #[tauri::command]
+async fn directory_size(path: String) -> Result<u64, String> {
+    blocking(move || filesystem::directory_size(&path)).await
+}
+
+#[tauri::command]
 async fn read_directory(path: String) -> Result<filesystem::DirectoryListing, String> {
     blocking(move || filesystem::read_directory(&path)).await
 }
@@ -368,6 +373,7 @@ pub fn run() {
             open_directory_window,
             search_files,
             read_directory,
+            directory_size,
             read_image,
             read_preview_file,
             prepare_video_preview,

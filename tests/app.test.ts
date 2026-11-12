@@ -339,6 +339,28 @@ describe('file manager interactions', () => {
     expect(host.querySelector('.file-preview-modal')).toBeNull();
   });
 
+  it('shows basic information for folders and unsupported files with Space', async () => {
+    vi.spyOn(api, 'directorySize').mockResolvedValue(292520);
+    const space = (target: Element) => target.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }));
+    await click(button('Documents'));
+    space(button('Documents'));
+    await vi.waitFor(() => expect(host.querySelector('.info-preview-modal')?.textContent).toContain('Documents'));
+    await vi.waitFor(() => expect(host.querySelector('.info-preview-modal')?.textContent).toContain('285.7 KB'));
+    expect(host.querySelector('.info-preview-modal')?.textContent).toContain('修改时间');
+    space(host.querySelector('.info-preview-modal')!);
+    await tick();
+    expect(host.querySelector('.info-preview-modal')).toBeNull();
+    await doubleClick('Downloads');
+    await vi.waitFor(() => expect(button('设计素材.zip')).toBeTruthy());
+    await click(button('设计素材.zip'));
+    space(button('设计素材.zip'));
+    await tick();
+    expect(host.querySelector('.info-preview-modal')?.textContent).toContain('17.6 MB');
+    expect(host.querySelector('.info-preview-modal')?.textContent).toContain('压缩文件');
+    await click(button('关闭信息'));
+    expect(host.querySelector('.info-preview-modal')).toBeNull();
+  });
+
   it('opens a text preview from the context menu', async () => {
     await contextMenu('开始使用.md');
     await click(menuItem('预览'));

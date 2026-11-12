@@ -50,6 +50,15 @@ export const api = {
   listenOpenDirectories: (handler: () => void) => desktop ? getCurrentWebview().listen('open-directories', handler) : Promise.resolve(() => {}),
   setWindowDirectory: (path: string) => desktop ? invoke<void>('set_window_directory', { path }) : Promise.resolve(),
   read: (path: string) => call<DirectoryListing>('read_directory', { path }),
+  directorySize: async (path: string): Promise<number> => {
+    if (desktop) return invoke<number>('directory_size', { path });
+    const listing = await call<DirectoryListing>('read_directory', { path });
+    let total = 0;
+    for (const entry of listing.entries) {
+      if (!entry.isSymlink) total += entry.isDir ? await api.directorySize(entry.path) : entry.size;
+    }
+    return total;
+  },
   create: (parent: string, name: string) => call<string>('create_folder', { parent, name }),
   rename: (path: string, name: string) => call<string>('rename_entry', { path, name }),
   transfer: (paths: string[], destination: string, mode: 'copy' | 'cut') => call<string[]>('transfer_entries', { paths, destination, mode }),
