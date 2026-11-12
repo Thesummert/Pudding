@@ -782,7 +782,7 @@
           {#each info?.roots ?? [] as root}
             <div class="device-row"><button class="device-open" data-drop-path={root.path} class:drop-target={dropRegion === 'sidebar' && dropTarget === root.path} class:active={directory?.path === root.path} onclick={() => navigate(root.path)} disabled={operating} title={root.path}><HardDrive size={18} strokeWidth={1.8} /><span>{root.name}</span></button>{#if root.ejectable}<button class="device-eject" title={`推出 ${root.name}`} aria-label={`推出 ${root.name}`} onclick={() => ejectVolume(root)} disabled={busy}><Eject size={15} /></button>{/if}</div>
           {/each}
-          <button onclick={() => { smbError = ''; smbShares = null; smbDialog.showModal(); }} disabled={!desktop || info?.platform !== 'macos'} title={!desktop ? '请在桌面版中连接 SMB' : info?.platform !== 'macos' ? '当前仅支持 macOS' : '连接 SMB 共享'}><Network size={18} strokeWidth={1.8} /><span>连接 SMB 共享</span></button>
+          <button onclick={() => { smbError = ''; smbShares = null; smbDialog.showModal(); }} disabled={!desktop || !['macos', 'linux'].includes(info?.platform ?? '')} title={!desktop ? '请在桌面版中连接 SMB' : !['macos', 'linux'].includes(info?.platform ?? '') ? '当前仅支持 macOS 和 Linux' : '连接 SMB 共享'}><Network size={18} strokeWidth={1.8} /><span>连接 SMB 共享</span></button>
         </nav>
         <div class="sidebar-note"><span class="note-icon"><Folder size={19} strokeWidth={1.5} /></span><p>给每一份灵感<br />一个妥帖的位置。</p><span class="note-line"></span></div>
       </div>

@@ -8,7 +8,7 @@
 - 后退、前进、上一级、路径面包屑、手动输入绝对路径或 `~/…`、刷新；支持鼠标侧键后退和前进。
 - 图标和详细列表两种视图；文件夹优先排序；按名称、修改时间、大小或类型排序。
 - 自动刷新已挂载设备；可在侧栏安全推出系统支持的可移除磁盘。
-- macOS 可通过侧栏连接 SMB，输入服务器地址和账户后可在应用内选择共享，挂载后自动打开；成功连接的地址保存在最近连接中，密码不会保存。
+- macOS 和 Linux 可通过侧栏连接 SMB，输入服务器地址和账户后可在应用内选择共享，挂载后自动打开；成功连接的地址保存在最近连接中，密码不会保存。
 - 桌面版递归搜索当前文件夹及其子文件夹，默认匹配文件名；可勾选「搜索内容」匹配文本文件，状态栏显示扫描数量。支持显示或隐藏隐藏文件。
 - 搜索时按需建立内存索引；监听当前文件夹及子文件夹的外部变更，自动刷新列表并使索引失效。
 - 多标签页浏览，每个标签保留独立的路径与导航历史；右键文件夹可在新标签页或新窗口中打开。
@@ -55,6 +55,22 @@ npm run tauri build
 ```
 
 产物位于 `src-tauri/target/release/bundle/`。各操作系统的安装包应在对应系统上构建；发布到其他电脑前还需要根据平台设置签名与公证。
+
+### Linux 和 Arch Linux 构建脚本
+
+在目标 Linux 系统及架构上安装 Node.js（20.19+ 或 22.12+）、Rust（1.91+）、C 编译器、pkg-config、GTK 3、WebKitGTK 4.1、OpenSSL 和相关开发依赖。Debian/Ubuntu 可安装 `build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev gvfs-backends gvfs-fuse`；Arch Linux 可安装 `base-devel curl wget file xdotool openssl libayatana-appindicator librsvg webkit2gtk-4.1 gvfs-smb nodejs npm rust`，并另行安装 Node.js、npm 和 Rust。AppImage 打包可能需要联网下载工具及 FUSE 支持。
+
+```bash
+# 通用 Linux：默认生成 deb
+npm run build:linux
+npm run build:linux -- --skip-install --bundles rpm,appimage
+
+# Arch Linux：生成 pacman 安装包（不要以 root 身份运行）
+npm run build:arch
+npm run build:arch -- --skip-install
+```
+
+脚本默认运行 `npm ci`，Tauri 会执行前端检查和构建，Rust 使用锁定依赖。Linux 脚本产物位于 Cargo target 目录下的 `release/bundle/`；可通过 `--bundles` 选择 `deb`、`rpm`、`appimage` 或逗号分隔的组合。打包格式还可能需要相应发行版的打包工具。Arch 脚本使用 makepkg 生成 pacman 包，位于 `release/bundle/pacman/`，可用 `sudo pacman -U 路径/包名.pkg.tar.zst` 安装。包扩展名取决于 makepkg 的压缩配置。
 
 ### macOS 构建脚本
 
@@ -149,7 +165,7 @@ tests/                   单元与端到端测试
 - 剪切使用文件系统重命名，不支持跨磁盘移动；可先复制，确认成功后再将源项目移入回收站。
 - 多项目操作可能部分成功，失败提示会说明已完成数量，界面会重新读取目录；暂未实现事务回滚、撤销和精确进度。
 - 图片预览支持 PNG、JPEG、GIF、WebP、SVG、AVIF、HEIC 和 BMP，实际解码能力取决于系统 WebView；不支持的格式或损坏文件在缩略图中回退为文件图标，信息面板和大图预览会显示错误提示。单张图片限制为 32 MB，较大的图片可使用默认应用打开。视频预览支持 MP4、M4V、MOV、MKV、AVI、WebM、MPEG 和 OGV，实际解码能力取决于系统 WebView。文本预览限 2 MB，PDF 预览限 64 MB；不支持的编码和过大的文件可使用默认应用打开。暂不提供其他文件内容预览或目录递归大小。
-- SMB 连接入口目前仅支持 macOS，应用使用 SMB2/3 枚举共享并由系统挂载；Windows 和 Linux 可浏览已由系统挂载且可通过本地路径访问的共享。双栏浏览和回收站浏览尚未实现。
+- macOS 和 Linux 使用 SMB2/3 枚举共享并由系统挂载；Linux 需要 GVfs、SMB 后端和 FUSE（Arch 安装 `gvfs-smb`，Debian/Ubuntu 安装 `gvfs-backends` 和 `gvfs-fuse`），并需有正常运行的桌面用户会话。Windows 可浏览已由系统挂载且可通过本地路径访问的共享。双栏浏览和回收站浏览尚未实现。
 
 桌面应用使用操作系统当前用户权限访问文件。渲染进程只加载本地内容，通过明确的 Rust 命令调用文件操作，CSP 禁止远程页面和脚本。
 

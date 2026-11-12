@@ -115,10 +115,14 @@ pub fn connect(address: &str, username: &str, password: &str) -> Result<Vec<Stri
         }
         Ok(mounts)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux_connect(&url, username, password)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = (url, username, password);
-        Err("当前仅支持在 macOS 上连接 SMB 共享".into())
+        Err("当前系统不支持连接 SMB 共享".into())
     }
 }
 
@@ -128,7 +132,7 @@ pub async fn list_shares(
     password: &str,
 ) -> Result<Vec<String>, String> {
     let url = validate_address(address)?;
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         let host = url.host().ok_or("请输入服务器地址")?;
         let server = format!("{}:{}", host, url.port().unwrap_or(445));
@@ -141,11 +145,114 @@ pub async fn list_shares(
             .map_err(|e| format!("无法读取共享列表：{e}"))?;
         Ok(shares.into_iter().map(|share| share.name).collect())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = (url, username, password);
-        Err("当前仅支持在 macOS 上连接 SMB 共享".into())
+        Err("当前系统不支持连接 SMB 共享".into())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_connect(url: &Url, username: &str, password: &str) -> Result<Vec<String>, String> {
+    use gio::prelude::*;
+    use gtk::{gio, glib};
+
+    let context = glib::MainContext::new();
+    context
+        .with_thread_default(|| {
+            let file = gio::File::for_uri(url.as_str());
+            let operation = gio::MountOperation::new();
+            let username = username.to_owned();
+            let password = password.to_owned();
+            let requested = std::cell::Cell::new(false);
+            operation.connect_ask_password(move |op, _, _, default_domain, _| {
+                if requested.replace(true) {
+                    op.reply(gio::MountOperationResult::Aborted);
+                    return;
+                }
+                op.set_anonymous(is_guest(&username, &password));
+                if !is_guest(&username, &password) {
+                    op.set_username(Some(&username));
+                    op.set_password(Some(&password));
+                    op.set_domain(Some(default_domain));
+                }
+                op.set_password_save(gio::PasswordSave::Never);
+                op.reply(gio::MountOperationResult::Handled);
+            });
+            let result = context.block_on(
+                file.mount_enclosing_volume_future(gio::MountMountFlags::NONE, Some(&operation)),
+            );
+            if let Err(error) = result {
+                if !error.matches(gio::IOErrorEnum::AlreadyMounted) {
+                    return Err(format!(
+                        "无法挂载 SMB 共享：{error}（请确认已安装并运行 GVfs SMB 服务）"
+                    ));
+                }
+            }
+            gvfs_path(url).map(|path| vec![path])
+        })
+        .map_err(|e| format!("无法初始化挂载服务：{e}"))?
+}
+
+#[cfg(target_os = "linux")]
+fn gvfs_path(url: &Url) -> Result<String, String> {
+    use gtk::glib;
+    let decode = |s: &str| glib::uri_unescape_string(s, None::<&str>).map(|v| v.to_string());
+    let host = url.host_str().ok_or("缺少服务器地址")?;
+    let mut segments = url.path_segments().ok_or("缺少共享名称")?;
+    let share = decode(segments.next().unwrap_or_default()).ok_or("共享名称无效")?;
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .ok_or("未设置 XDG_RUNTIME_DIR，无法访问 GVfs 挂载目录")?;
+    let entries = std::fs::read_dir(std::path::Path::new(&runtime).join("gvfs"))
+        .map_err(|e| format!("无法读取 GVfs 挂载目录：{e}；请确认 gvfs-fuse 已运行"))?;
+    let mut matches = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let Some(fields) = name.strip_prefix("smb-share:") else {
+            continue;
+        };
+        let mut server = None;
+        let mut mounted_share = None;
+        let mut port = None;
+        for field in fields.split(',') {
+            if let Some((key, value)) = field.split_once('=') {
+                match key {
+                    "server" => server = decode(value),
+                    "share" => mounted_share = decode(value),
+                    "port" => port = value.parse::<u16>().ok(),
+                    _ => {}
+                }
+            }
+        }
+        if server
+            .as_deref()
+            .is_some_and(|s| s.eq_ignore_ascii_case(host))
+            && mounted_share.as_deref() == Some(&share)
+            && port.unwrap_or(445) == url.port().unwrap_or(445)
+        {
+            matches.push(entry.path());
+        }
+    }
+    if matches.len() > 1 {
+        return Err("存在多个相同服务器和共享的挂载，请先卸载多余的连接".into());
+    }
+    if let Some(mut path) = matches.pop() {
+        for segment in segments {
+            let segment = decode(segment).ok_or("路径无效")?;
+            if segment == "." || segment == ".." || segment.contains('/') || segment.contains('\0')
+            {
+                return Err("路径无效".into());
+            }
+            path.push(segment);
+        }
+        if path.exists() {
+            return Ok(path.to_string_lossy().into_owned());
+        }
+        return Err("共享已挂载，但指定的目录不存在".into());
+    }
+
+    Err("共享已挂载，但未找到本地 GVfs 路径；请确认 gvfs-fuse 已安装并运行".into())
 }
 
 #[cfg(test)]
