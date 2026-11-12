@@ -690,8 +690,19 @@
   <header class="app-header">
     <a class="brand" href="#home" onclick={(event) => { event.preventDefault(); if (info && !busy) void navigate(info.home); }} aria-label="Pudding 主文件夹">
       <span class="brand-mark"><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M6 11a2 2 0 0 1 2-2h7l3 3h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V11Z" fill="white" opacity=".95"/><path d="M6 16h21v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-8Z" fill="#b9d2ff"/></svg></span>
-      <span>Pudding<span class="brand-caption">文件管理器</span></span>
+      <span>Pudding</span>
     </a>
+      <div class="tab-bar" aria-label="文件夹标签页">
+        <div class="tab-list" role="tablist" aria-label="文件夹标签页">
+          {#each tabs as tab (tab.id)}
+            <div class="tab" class:active={tab.id === activeTab}>
+              <button class="tab-select" role="tab" aria-selected={tab.id === activeTab} title={tab.path} disabled={busy} onclick={() => switchTab(tab.id)}><Folder size={14} /><span>{info?.places.find((place) => place.path === tab.path)?.name ?? (tab.path ? basename(tab.path) : '文件夹')}</span></button>
+              {#if tabs.length > 1}<button class="tab-close" aria-label="关闭标签页" title="关闭标签页" disabled={busy} onclick={() => closeTab(tab.id)}><X size={13} /></button>{/if}
+            </div>
+          {/each}
+        </div>
+        <button class="icon-button tab-add" title="新建标签页" aria-label="新建标签页" disabled={busy || !directory} onclick={() => newTab()}><Plus size={17} /></button>
+      </div>
     <div class="header-actions">
       {#if !desktop}<span class="demo-badge" title="浏览器中使用示例数据；桌面版连接真实文件系统">演示模式</span>{:else}<span class="desktop-badge"><span class="status-dot"></span>本地工作空间</span>{/if}
       <button class="icon-button" title="设置" aria-label="设置" onclick={() => settingsDialog.showModal()}><Settings size={18} /></button>
@@ -724,17 +735,6 @@
     </aside>
 
     <main class="main-shell">
-      <div class="tab-bar" aria-label="文件夹标签页">
-        <div class="tab-list" role="tablist" aria-label="文件夹标签页">
-          {#each tabs as tab (tab.id)}
-            <div class="tab" class:active={tab.id === activeTab}>
-              <button class="tab-select" role="tab" aria-selected={tab.id === activeTab} title={tab.path} disabled={busy} onclick={() => switchTab(tab.id)}><Folder size={14} /><span>{info?.places.find((place) => place.path === tab.path)?.name ?? (tab.path ? basename(tab.path) : '文件夹')}</span></button>
-              {#if tabs.length > 1}<button class="tab-close" aria-label="关闭标签页" title="关闭标签页" disabled={busy} onclick={() => closeTab(tab.id)}><X size={13} /></button>{/if}
-            </div>
-          {/each}
-        </div>
-        <button class="icon-button tab-add" title="新建标签页" aria-label="新建标签页" disabled={busy || !directory} onclick={() => newTab()}><Plus size={17} /></button>
-      </div>
       <div class="navigation-bar">
         <div class="navigation-controls">
           <button class="icon-button" title="后退 (Alt+←)" aria-label="后退" disabled={busy || historyIndex <= 0} onclick={back}><ArrowLeft size={19} /></button>
