@@ -6,6 +6,7 @@ mod rename;
 mod search;
 mod session;
 mod smb;
+mod sugar;
 mod terminal;
 mod volumes;
 
@@ -275,6 +276,16 @@ async fn open_entry_with(path: String, application: Option<String>) -> Result<()
 }
 
 #[tauri::command]
+async fn sugar_available() -> Result<bool, String> {
+    blocking(|| Ok(sugar::available())).await
+}
+
+#[tauri::command]
+async fn sugar_archive(action: String, paths: Vec<String>) -> Result<(), String> {
+    blocking(move || sugar::run(&action, paths)).await
+}
+
+#[tauri::command]
 async fn open_terminal(
     path: String,
     terminal: String,
@@ -400,6 +411,8 @@ pub fn run() {
             open_entry,
             open_entry_with,
             list_open_apps,
+            sugar_available,
+            sugar_archive,
             open_terminal,
             choose_terminal,
             read_file_clipboard,

@@ -67,6 +67,8 @@ export const api = {
   open: (path: string) => call<void>('open_entry', { path }),
   listOpenApps: (path: string) => desktop ? invoke<{ id: string; name: string }[]>('list_open_apps', { path }) : Promise.resolve([]),
   openWith: (path: string, application: string | null = null) => desktop ? invoke<void>('open_entry_with', { path, application }) : Promise.reject(new Error('浏览器演示无法启动本地应用。')),
+  sugarAvailable: () => desktop ? invoke<boolean>('sugar_available') : Promise.resolve(false),
+  sugarArchive: (action: string, paths: string[]) => invoke<void>('sugar_archive', { action, paths }),
   openTerminal: (path: string, terminal: string, custom: string) => desktop ? invoke<void>('open_terminal', { path, terminal, custom }) : Promise.reject(new Error('浏览器演示无法打开终端。')),
   chooseTerminal: () => desktop ? invoke<string | null>('choose_terminal') : Promise.reject(new Error('浏览器演示无法选择终端应用。')),
   previewBytes: async (path: string, kind: 'text' | 'pdf'): Promise<Uint8Array> => {

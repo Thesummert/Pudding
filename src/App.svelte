@@ -92,6 +92,9 @@
   }
   let smbHistory = $state(loadSmbHistory());
   let context = $state<{ x: number; y: number } | null>(null);
+  let sugarAvailable = $state(false);
+  let sugarMenuOpen = $state(false);
+  let sugarRequest = 0;
   let optionsOpen = $state(false);
   let preview = $state<FileEntry | null>(null);
 
@@ -102,6 +105,7 @@
   let entries = $derived(visibleEntries(query.trim() && searchResults !== null ? searchResults : directory?.entries ?? [], query.trim() && searchResults !== null ? '' : query, preferences.hidden, sort, descending));
   let selectedEntries = $derived(entries.filter((entry) => selected.has(entry.path)));
   let focused = $derived(selectedEntries.length === 1 ? selectedEntries[0] : undefined);
+  let archiveSelected = $derived(focused && !focused.isDir && /\.(?:zip|7z|tar|tar\.gz|tar\.bz2|tar\.xz|tgz|tbz2?|txz)$/i.test(focused.name));
   let currentPlace = $derived(info?.places.find((place) => place.path === directory?.path));
   let title = $derived(currentPlace?.name ?? (directory ? basename(directory.path) : '主文件夹'));
   let folderCount = $derived(entries.filter((e) => e.isDir).length);
@@ -667,6 +671,16 @@
     catch { notify('无法访问系统剪贴板，可在地址栏中手动复制路径。', true); }
   }
 
+  async function runSugar(action: string) {
+    const paths = selected.size ? [...selected] : directory ? [directory.path] : [];
+    context = null;
+    if (!paths.length || busy) return;
+    operating = true;
+    try { await api.sugarArchive(action, paths); notify(action === 'custom' ? '已打开 Sugar' : action === 'compress' ? '压缩完成' : '解压完成'); }
+    catch (error) { notify(errorMessage(error), true); }
+    finally { operating = false; if (action !== 'custom') refresh(); }
+  }
+
   function contextMenu(event: MouseEvent, entry?: FileEntry) {
     event.preventDefault();
     event.stopPropagation();
@@ -675,6 +689,10 @@
     if (entry && !selected.has(entry.path)) selected = new Set([entry.path]);
     if (!entry) selected = new Set();
     optionsOpen = false;
+    sugarAvailable = false;
+    sugarMenuOpen = false;
+    const request = ++sugarRequest;
+    if (directory && desktop) void api.sugarAvailable().then((available) => { if (request === sugarRequest && context) sugarAvailable = available; }).catch(() => {});
     context = { x: Math.max(8, Math.min(event.clientX, innerWidth - 220)), y: Math.max(8, Math.min(event.clientY, innerHeight - 450)) };
   }
 
@@ -917,6 +935,15 @@
     {#if desktop && focused && !focused.isDir}<button role="menuitem" onclick={() => void openWith(focused!)}><ExternalLink size={16} /><span>选择其他应用打开…</span></button>{/if}
     {#if focused?.isDir}<button role="menuitem" onclick={() => { const path = focused!.path; context = null; newTab(path); }}><FolderPlus size={16} /><span>在新标签页中打开</span></button><button role="menuitem" onclick={() => void openInWindow(focused!.path)}><ExternalLink size={16} /><span>在新窗口中打开</span></button>{/if}
     {#if directory && (focused?.isDir || selected.size === 0)}<button role="menuitem" onclick={() => void openTerminal(focused?.isDir ? focused.path : directory!.path)}><Terminal size={16} /><span>在终端中打开</span></button>{/if}
+    {#if sugarAvailable && (selected.size || directory)}
+      <div class="menu-divider"></div>
+      <button role="menuitem" aria-haspopup="menu" aria-expanded={sugarMenuOpen} onclick={(event) => { event.stopPropagation(); sugarMenuOpen = !sugarMenuOpen; }} onmouseenter={() => sugarMenuOpen = true}><FileText size={16} /><span>解压缩</span><ChevronRight size={14} /></button>
+      {#if sugarMenuOpen}<div class="archive-submenu" role="menu" aria-label="解压缩">
+        {#if archiveSelected}<button role="menuitem" onclick={() => void runSugar('extract')}><Folder size={16} /><span>解压到当前文件夹</span></button><button role="menuitem" onclick={() => void runSugar('extract-folder')}><FolderPlus size={16} /><span>解压到同名文件夹</span></button>{/if}
+        <button role="menuitem" onclick={() => void runSugar('compress')}><FileText size={16} /><span>{selected.size ? '快速压缩为 ZIP' : '快速压缩当前文件夹'}</span></button>
+        <button role="menuitem" onclick={() => void runSugar('custom')}><ExternalLink size={16} /><span>使用 Sugar 自定义压缩…</span></button>
+      </div>{/if}
+    {/if}
     {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{shortcutModifier} C</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{shortcutModifier} X</kbd></button>{/if}
     <button role="menuitem" onclick={paste} disabled={busy || (!desktop && !clipboard)}><ClipboardPaste size={16} /><span>粘贴</span><kbd>{shortcutModifier} V</kbd></button>
     <div class="menu-divider"></div>
