@@ -339,6 +339,13 @@ describe('file manager interactions', () => {
     expect(host.querySelector('.file-preview-modal')).toBeNull();
   });
 
+  it('opens a text preview from the context menu', async () => {
+    await contextMenu('开始使用.md');
+    await click(menuItem('预览'));
+    await vi.waitFor(() => expect(host.querySelector('.text-preview')?.textContent).toContain('开始使用.md'));
+    expect(host.querySelector('.context-menu')).toBeNull();
+  });
+
   it('decodes UTF-16 text and reports binary content', async () => {
     const bytes = vi.spyOn(api, 'previewBytes').mockResolvedValueOnce(new Uint8Array([0xff, 0xfe, 0x41, 0x00, 0x42, 0x00])).mockResolvedValueOnce(new Uint8Array([0x41, 0x00, 0x42]));
     await click(button('开始使用.md'));
