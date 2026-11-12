@@ -1,5 +1,6 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import type { AppInfo, DirectoryListing } from './types';
+import { imageMimeType } from './files';
 
 export const desktop = isTauri();
 
@@ -17,4 +18,8 @@ export const api = {
   transfer: (paths: string[], destination: string, mode: 'copy' | 'cut') => call<string[]>('transfer_entries', { paths, destination, mode }),
   trash: (paths: string[]) => call<void>('trash_entries', { paths }),
   open: (path: string) => call<void>('open_entry', { path }),
+  image: async (path: string, extension: string): Promise<string> => {
+    const bytes = await call<ArrayBuffer | number[]>('read_image', { path });
+    return URL.createObjectURL(new Blob([bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes)], { type: imageMimeType(extension) }));
+  },
 };

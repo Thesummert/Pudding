@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import App from '../src/App.svelte';
+import { api } from '../src/lib/api';
 
 let app: ReturnType<typeof mount>;
 let host: HTMLDivElement;
@@ -59,9 +60,74 @@ beforeEach(async () => {
 afterEach(async () => {
   await unmount(app);
   host.remove();
+  vi.restoreAllMocks();
 });
 
 describe('file manager interactions', () => {
+  it('previews images in the inspector and dialog without launching an external app', async () => {
+    const open = vi.spyOn(api, 'open');
+    await doubleClick('Pictures');
+    await vi.waitFor(() => expect(button('海岸.svg')).toBeTruthy());
+    await click(button('海岸.svg'));
+    await vi.waitFor(() => expect(host.querySelector('.inspector-image img')?.getAttribute('alt')).toBe('海岸.svg'));
+    await click(button('预览图片'));
+    expect(host.querySelector('.image-modal[open]')).not.toBeNull();
+    expect(host.querySelector('#image-preview-title')?.textContent).toBe('海岸.svg');
+    expect(button('上一张图片').disabled).toBe(true);
+    await click(button('下一张图片'));
+    expect(host.querySelector('#image-preview-title')?.textContent).toBe('山间.svg');
+    expect(button('下一张图片').disabled).toBe(true);
+    await click(button('实际大小'));
+    expect(host.querySelector('.image-modal .image-preview.actual-size')).not.toBeNull();
+    host.querySelector('.image-modal')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    await tick();
+    expect(host.querySelector('#image-preview-title')?.textContent).toBe('海岸.svg');
+    expect(host.querySelector('.image-modal .actual-size')).toBeNull();
+    await click(button('关闭图片预览'));
+    expect(host.querySelector('.image-modal')).toBeNull();
+    await doubleClick('海岸.svg');
+    expect(host.querySelector('.image-modal[open]')).not.toBeNull();
+    await click(button('关闭图片预览'));
+    button('海岸.svg').dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }));
+    await tick();
+    expect(host.querySelector('.image-modal[open]')).not.toBeNull();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('shows image load and decoding failures and clears preview after changing selection', async () => {
+    vi.spyOn(api, 'image').mockRejectedValueOnce(new Error('图片超过 32 MB，请使用默认应用打开'));
+    await doubleClick('Pictures');
+    await vi.waitFor(() => expect(button('海岸.svg')).toBeTruthy());
+    await click(button('海岸.svg'));
+    await vi.waitFor(() => expect(host.querySelector('.inspector-image')?.textContent).toContain('图片超过 32 MB'));
+    await click(button('山间.svg'));
+    await vi.waitFor(() => expect(host.querySelector('.inspector-image img')).not.toBeNull());
+    host.querySelector('.inspector-image img')!.dispatchEvent(new Event('error'));
+    await tick();
+    expect(host.querySelector('.inspector-image')?.textContent).toContain('无法预览图片');
+    await click(button('旅行'));
+    expect(host.querySelector('.inspector-image')).toBeNull();
+  });
+
+  it('discards stale image responses and releases image URLs when selection changes', async () => {
+    const stale = URL.createObjectURL(new Blob(['stale']));
+    const current = URL.createObjectURL(new Blob(['current']));
+    let resolveImage!: (url: string) => void;
+    const pending = new Promise<string>((resolve) => resolveImage = resolve);
+    vi.spyOn(api, 'image').mockReturnValueOnce(pending).mockResolvedValueOnce(current);
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    await doubleClick('Pictures');
+    await vi.waitFor(() => expect(button('海岸.svg')).toBeTruthy());
+    await click(button('海岸.svg'));
+    await click(button('山间.svg'));
+    await vi.waitFor(() => expect(host.querySelector('.inspector-image img')?.getAttribute('src')).toBe(current));
+    resolveImage(stale);
+    await vi.waitFor(() => expect(revoke).toHaveBeenCalledWith(stale));
+    expect(host.querySelector('.inspector-image img')?.getAttribute('src')).toBe(current);
+    await click(button('旅行'));
+    expect(revoke).toHaveBeenCalledWith(current);
+  });
+
   it('navigates with history, parent controls and manually entered paths', async () => {
     await doubleClick('Documents');
     await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));

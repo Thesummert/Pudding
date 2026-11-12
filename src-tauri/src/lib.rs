@@ -22,6 +22,13 @@ async fn read_directory(path: String) -> Result<filesystem::DirectoryListing, St
 }
 
 #[tauri::command]
+async fn read_image(path: String) -> Result<tauri::ipc::Response, String> {
+    blocking(move || filesystem::read_image(&path))
+        .await
+        .map(tauri::ipc::Response::new)
+}
+
+#[tauri::command]
 async fn create_folder(parent: String, name: String) -> Result<String, String> {
     blocking(move || filesystem::create_folder(&parent, &name)).await
 }
@@ -60,6 +67,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_info,
             read_directory,
+            read_image,
             create_folder,
             rename_entry,
             transfer_entries,

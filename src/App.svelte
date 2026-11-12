@@ -2,9 +2,12 @@
   import { onMount, tick } from 'svelte';
   import { ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert } from '@lucide/svelte';
   import FileIcon from './lib/FileIcon.svelte';
+  import FileThumbnail from './lib/FileThumbnail.svelte';
   import NameDialog from './lib/NameDialog.svelte';
+  import ImagePreview from './lib/ImagePreview.svelte';
+  import ImagePreviewDialog from './lib/ImagePreviewDialog.svelte';
   import { api, desktop } from './lib/api';
-  import { basename, breadcrumbs, fileKind, formatDate, formatSize, visibleEntries } from './lib/files';
+  import { basename, breadcrumbs, fileKind, formatDate, formatSize, isImage, visibleEntries } from './lib/files';
   import type { AppInfo, Clipboard, DirectoryListing, FileEntry, SortKey, ViewMode } from './lib/types';
 
   type Preferences = { view: ViewMode; hidden: boolean; inspector: boolean; size: number; dark: boolean };
@@ -44,6 +47,7 @@
   let helpDialog: HTMLDialogElement;
   let context = $state<{ x: number; y: number } | null>(null);
   let optionsOpen = $state(false);
+  let preview = $state<FileEntry | null>(null);
 
   const placeIcons: Record<string, typeof Home> = { home: Home, desktop: Monitor, documents: FileText, downloads: Download, pictures: Image, music: Music2, videos: Film };
   const folderLabels: Record<string, string> = { Desktop: '桌面', Documents: '文档', Downloads: '下载', Music: '音乐', Pictures: '图片', Videos: '视频', Projects: '项目', Archive: '归档' };
@@ -162,10 +166,20 @@
   async function openEntry(entry: FileEntry) {
     if (busy) return;
     if (entry.isDir) await navigate(entry.path);
-    else {
-      try { await api.open(entry.path); }
-      catch (error) { notify(errorMessage(error), true); }
-    }
+    else if (isImage(entry)) previewImage(entry);
+    else await openExternal(entry);
+  }
+
+  async function openExternal(entry: FileEntry) {
+    try { await api.open(entry.path); }
+    catch (error) { notify(errorMessage(error), true); }
+  }
+
+  function previewImage(entry: FileEntry) {
+    if (busy || !isImage(entry)) return;
+    context = null;
+    optionsOpen = false;
+    preview = entry;
   }
 
   function openDialog(mode: 'create' | 'rename') {
@@ -294,6 +308,7 @@
     else if (modifier && key === 'v') { event.preventDefault(); void paste(); }
     else if (key === 'f2') { event.preventDefault(); openDialog('rename'); }
     else if (key === 'delete') { event.preventDefault(); confirmTrash(); }
+    else if (event.code === 'Space' && focused && isImage(focused) && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); previewImage(focused); }
     else if (key === 'enter' && focused && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); void openEntry(focused); }
     else if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key) && entries.length && (target.closest('.file-area') || target === document.body)) {
       event.preventDefault();
@@ -406,7 +421,7 @@
                 {#each entries as entry, index (entry.path)}
                   <button class="file-card" class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} title={`${entry.name}\n${entry.isDir ? '文件夹' : formatSize(entry.size)}\n双击打开`} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
                     {#if selected.has(entry.path)}<span class="selected-check"><Check size={10} strokeWidth={3} /></span>{/if}
-                    <FileIcon {entry} large />
+                    <span class="file-visual">{#if isImage(entry)}<FileThumbnail {entry} large />{:else}<FileIcon {entry} large />{/if}</span>
                     <span class="file-name">{entry.name}</span><span class="file-caption">{entry.isDir ? folderLabels[entry.name] ?? '文件夹' : formatSize(entry.size)}</span>
                   </button>
                 {/each}
@@ -416,7 +431,7 @@
               <div class="file-list">
                 {#each entries as entry, index (entry.path)}
                   <button class="file-row" class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
-                    <span class="row-name"><FileIcon {entry} /><span>{entry.name}</span></span><span class="row-date">{formatDate(entry.modified)}</span><span class="row-type">{fileKind(entry)}</span><span class="row-size">{entry.isDir ? '—' : formatSize(entry.size)}</span>
+                    <span class="row-name">{#if isImage(entry)}<FileThumbnail {entry} />{:else}<FileIcon {entry} />{/if}<span>{entry.name}</span></span><span class="row-date">{formatDate(entry.modified)}</span><span class="row-type">{fileKind(entry)}</span><span class="row-size">{entry.isDir ? '—' : formatSize(entry.size)}</span>
                   </button>
                 {/each}
               </div>
@@ -429,11 +444,15 @@
         {#if preferences.inspector}
           <aside class="inspector" aria-label="信息面板">
             <div class="inspector-heading"><span>详细信息</span><button class="icon-button compact" title="关闭信息面板" aria-label="关闭信息面板" onclick={() => preferences.inspector = false}><X size={16} /></button></div>
-            <div class="inspector-preview" class:multi={selected.size > 1}><div class="preview-orbit"></div><FileIcon entry={inspectorEntry} large />{#if selected.size > 1}<span class="multi-count">{selected.size}</span>{/if}</div>
+            {#if focused && isImage(focused)}
+              <button class="inspector-image" title="预览图片 (空格)" aria-label="预览图片" onclick={() => previewImage(focused!)} disabled={busy}><ImagePreview entry={focused} /></button>
+            {:else}
+              <div class="inspector-preview" class:multi={selected.size > 1}><div class="preview-orbit"></div><FileIcon entry={inspectorEntry} large />{#if selected.size > 1}<span class="multi-count">{selected.size}</span>{/if}</div>
+            {/if}
             <div class="inspector-name"><h2>{selected.size > 1 ? `${selected.size} 个项目` : focused?.name ?? title}</h2><span class="type-badge">{selected.size > 1 ? '多项选择' : focused ? fileKind(focused) : '当前文件夹'}</span></div>
             <div class="inspector-divider"></div>
             <dl class="properties"><div><dt>位置</dt><dd class="path-value" title={focused?.path ?? directory?.path}>{selected.size > 1 ? directory?.path : focused?.path ?? directory?.path ?? '—'}</dd></div>{#if focused}<div><dt>类型</dt><dd>{fileKind(focused)}</dd></div>{#if !focused.isDir}<div><dt>大小</dt><dd>{formatSize(focused.size)}</dd></div>{/if}<div><dt>修改时间</dt><dd>{formatDate(focused.modified)}</dd></div>{:else if selected.size > 1}<div><dt>已选项目</dt><dd>{selected.size} 项</dd></div><div><dt>文件大小</dt><dd>{formatSize(selectedSize)}</dd></div>{:else}<div><dt>内容</dt><dd>{directory?.entries.filter((e) => preferences.hidden || !e.hidden).length ?? 0} 个项目</dd></div><div><dt>文件夹</dt><dd>{directory?.entries.filter((e) => e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div><div><dt>文件</dt><dd>{directory?.entries.filter((e) => !e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div>{/if}</dl>
-            {#if focused}<button class="button inspector-open" onclick={() => openEntry(focused!)} disabled={busy}><ExternalLink size={15} />{focused.isDir ? '打开文件夹' : '使用默认应用打开'}<ArrowRight size={14} /></button>{/if}
+            {#if focused}<button class="button inspector-open" onclick={() => focused!.isDir ? openEntry(focused!) : openExternal(focused!)} disabled={busy}><ExternalLink size={15} />{focused.isDir ? '打开文件夹' : '使用默认应用打开'}<ArrowRight size={14} /></button>{/if}
             <div class="inspector-tip"><span class="tip-label"><Info size={14} />小提示</span><p>{selected.size ? `按住 ${shortcutModifier} 点选多个项目，或按 Shift 连续选择。` : '单击查看文件信息，双击打开。也可以在地址栏中输入路径。'}</p></div>
             <div class="inspector-bottom"><span class="tiny-spark">✦</span> 少一点寻找，多一点专注。</div>
           </aside>
@@ -447,7 +466,8 @@
   {#if notice}<div class="toast" class:error={notice.error} role={notice.error ? 'alert' : 'status'}>{#if notice.error}<CircleAlert size={18} />{:else}<Check size={18} />{/if}<span>{notice.text}</span><button class="icon-button compact" title="关闭提示" aria-label="关闭提示" onclick={() => notice = null}><X size={15} /></button></div>{/if}
 
   {#if context}<div class="context-menu" role="menu" style={`left: ${context.x}px; top: ${context.y}px`}>
-    {#if selected.size === 1}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>打开</span><kbd>Enter</kbd></button>{/if}
+    {#if focused && isImage(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览图片</span><kbd>Space</kbd></button><button role="menuitem" onclick={() => { context = null; void openExternal(focused!); }}><ExternalLink size={16} /><span>使用默认应用打开</span></button>{/if}
+    {#if focused && !isImage(focused)}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>打开</span><kbd>Enter</kbd></button>{/if}
     {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{shortcutModifier} C</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{shortcutModifier} X</kbd></button>{/if}
     <button role="menuitem" onclick={paste} disabled={!clipboard}><ClipboardPaste size={16} /><span>粘贴</span><kbd>{shortcutModifier} V</kbd></button>
     <div class="menu-divider"></div>
@@ -458,6 +478,7 @@
   </div>{/if}
 
   {#if dialog}<NameDialog mode={dialog.mode} initial={dialog.mode === 'rename' ? dialog.entry?.name : ''} busy={operating} error={dialogError} onsubmit={submitName} onclose={() => { if (!operating) dialog = null; }} />{/if}
+  {#if preview}<ImagePreviewDialog entries={entries.filter(isImage)} initial={preview} onclose={() => preview = null} onopen={openExternal} />{/if}
 
   <dialog class="modal trash-modal" bind:this={trashDialog} oncancel={(event) => { if (operating) event.preventDefault(); }}><div class="modal-top"><span class="modal-icon danger"><Trash2 size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => trashDialog.close()} disabled={operating}><X size={18} /></button></div><h2>移入回收站？</h2><p>将选中的 {selected.size} 个项目移入系统回收站。你可以稍后从系统回收站中恢复。</p><div class="modal-actions"><button class="button" onclick={() => trashDialog.close()} disabled={operating}>取消</button><button class="button danger-button" onclick={moveToTrash} disabled={busy}>{#if operating}<LoaderCircle size={16} class="spin" />{/if}移入回收站</button></div></dialog>
 

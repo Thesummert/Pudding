@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::{
     fs::{self, OpenOptions},
-    io,
+    io::{self, Read},
     path::{Component, Path, PathBuf},
     time::UNIX_EPOCH,
 };
@@ -358,10 +358,88 @@ pub fn openable_path(path: &str) -> Result<String> {
     Ok(display(&path))
 }
 
+const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
+
+pub fn read_image(path: &str) -> Result<Vec<u8>> {
+    let path = checked_source(path)?;
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(
+        extension.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "avif" | "heic" | "bmp"
+    ) {
+        return Err("此文件格式不支持图片预览".into());
+    }
+    let metadata = fs::metadata(&path).map_err(|e| io_error("无法读取图片", &path, e))?;
+    if !metadata.is_file() {
+        return Err("只能预览普通图片文件".into());
+    }
+    if metadata.len() > MAX_IMAGE_BYTES {
+        return Err("图片超过 32 MB，请使用默认应用打开".into());
+    }
+    let file = fs::File::open(&path).map_err(|e| io_error("无法读取图片", &path, e))?;
+    let mut bytes = Vec::new();
+    // Limit the read as well, in case another process grows the file after metadata().
+    file.take(MAX_IMAGE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| io_error("无法读取图片", &path, e))?;
+    if bytes.len() as u64 > MAX_IMAGE_BYTES {
+        return Err("图片超过 32 MB，请使用默认应用打开".into());
+    }
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn reads_image_bytes_and_rejects_unsupported_or_missing_files() {
+        let dir = tempdir().unwrap();
+        let image = dir.path().join("图片 #1.PNG");
+        let bytes = b"\x89PNG\r\n\x1a\n";
+        fs::write(&image, bytes).unwrap();
+        assert_eq!(read_image(&display(&image)).unwrap(), bytes);
+        let text = dir.path().join("notes.txt");
+        fs::write(&text, "notes").unwrap();
+        assert!(read_image(&display(&text)).unwrap_err().contains("格式"));
+        assert!(read_image(&display(&dir.path().join("missing.png"))).is_err());
+        fs::create_dir(dir.path().join("folder.png")).unwrap();
+        assert!(read_image(&display(&dir.path().join("folder.png")))
+            .unwrap_err()
+            .contains("普通"));
+        assert!(read_image("relative.png").is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_images_before_reading_contents() {
+        let dir = tempdir().unwrap();
+        let image = dir.path().join("large.png");
+        fs::File::create(&image)
+            .unwrap()
+            .set_len(MAX_IMAGE_BYTES + 1)
+            .unwrap();
+        assert!(read_image(&display(&image)).unwrap_err().contains("32 MB"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn previews_image_symlinks_and_rejects_special_files() {
+        use std::os::unix::fs::symlink;
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("original.svg");
+        let link = dir.path().join("linked.svg");
+        fs::write(&source, "<svg/>").unwrap();
+        symlink(&source, &link).unwrap();
+        assert_eq!(read_image(&display(&link)).unwrap(), b"<svg/>");
+        let device = dir.path().join("device.png");
+        symlink("/dev/null", &device).unwrap();
+        assert!(read_image(&display(&device)).unwrap_err().contains("普通"));
+    }
 
     #[test]
     fn reads_real_entries_and_parent() {

@@ -2,6 +2,16 @@ import type { FileEntry, SortKey } from './types';
 
 const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
 
+const imageTypes: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', avif: 'image/avif', heic: 'image/heic', bmp: 'image/bmp' };
+
+export function imageMimeType(extension: string): string | undefined {
+  return Object.hasOwn(imageTypes, extension.toLowerCase()) ? imageTypes[extension.toLowerCase()] : undefined;
+}
+
+export function isImage(entry: FileEntry): boolean {
+  return !entry.isDir && imageMimeType(entry.extension) !== undefined;
+}
+
 export function formatSize(bytes: number): string {
   if (!bytes) return '0 B';
   const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), 4);
@@ -17,7 +27,7 @@ export function fileKind(entry: FileEntry): string {
   if (entry.isSymlink) return entry.isDir ? '文件夹链接' : '符号链接';
   if (entry.isDir) return '文件夹';
   const ext = entry.extension.toLowerCase();
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'heic', 'bmp'].includes(ext)) return '图像';
+  if (isImage(entry)) return '图像';
   if (['mp4', 'mov', 'mkv', 'avi', 'webm'].includes(ext)) return '视频';
   if (['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac'].includes(ext)) return '音频';
   if (['zip', 'rar', '7z', 'gz', 'tar', 'xz'].includes(ext)) return '压缩文件';
