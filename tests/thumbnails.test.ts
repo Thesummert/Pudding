@@ -88,3 +88,50 @@ describe('image thumbnails', () => {
     expect(host.querySelector('img')).toBeNull();
   });
 });
+
+
+describe('video thumbnails', () => {
+  const video: FileEntry = { ...entry, name: '视频.mp4', path: '/videos/视频.mp4', extension: 'mp4' };
+
+  it('loads the first frame only when visible and falls back on decode errors', async () => {
+    await unmount(app);
+    const load = vi.spyOn(api, 'videoSource').mockResolvedValue('asset://localhost/video');
+    app = mount(FileThumbnail, { target: host, props: { entry: video, large: true } });
+    await tick();
+    expect(load).not.toHaveBeenCalled();
+    intersect(true);
+    await vi.waitFor(() => expect(host.querySelector('video')).not.toBeNull());
+    expect(load).toHaveBeenCalledWith(video.path);
+    const player = host.querySelector('video')!;
+    expect(player.preload).toBe('auto');
+    Object.defineProperty(player, 'duration', { value: 10, configurable: true });
+    player.dispatchEvent(new Event('loadedmetadata'));
+    expect(player.currentTime).toBe(1);
+    expect(host.querySelector('.file-icon')).not.toBeNull();
+    player.dispatchEvent(new Event('loadeddata'));
+    await tick();
+    expect(host.querySelector('.file-icon')).toBeNull();
+    host.querySelector('video')!.dispatchEvent(new Event('error'));
+    await tick();
+    expect(host.querySelector('video')).toBeNull();
+    expect(host.querySelector('.file-icon')).not.toBeNull();
+    intersect(false);
+    await tick();
+    expect(host.querySelector('video')).toBeNull();
+  });
+
+  it('ignores late video results after the thumbnail leaves view', async () => {
+    await unmount(app);
+    let resolve!: (url: string) => void;
+    vi.spyOn(api, 'videoSource').mockReturnValue(new Promise<string>((done) => resolve = done));
+    app = mount(FileThumbnail, { target: host, props: { entry: video } });
+    await tick();
+    intersect(true);
+    await tick();
+    intersect(false);
+    await tick();
+    resolve('asset://localhost/video');
+    await tick();
+    expect(host.querySelector('video')).toBeNull();
+  });
+});

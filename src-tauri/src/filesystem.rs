@@ -392,6 +392,24 @@ pub fn openable_path(path: &str) -> Result<String> {
     Ok(display(&path))
 }
 
+pub fn video_preview_path(path: &str) -> Result<String> {
+    let path = checked_source(path)?;
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "mp4" | "mov" | "mkv" | "avi" | "webm") {
+        return Err("此文件格式不支持视频封面".into());
+    }
+    let metadata = fs::metadata(&path).map_err(|e| io_error("无法读取视频", &path, e))?;
+    if !metadata.is_file() {
+        return Err("只能预览普通视频文件".into());
+    }
+    let resolved = fs::canonicalize(&path).map_err(|e| io_error("无法访问视频", &path, e))?;
+    Ok(display(&resolved))
+}
+
 const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 
 pub fn read_image(path: &str) -> Result<Vec<u8>> {
@@ -461,6 +479,24 @@ mod tests {
         delete_entries(vec![display(&link)]).unwrap();
         assert!(target.join("file").exists());
         assert!(fs::symlink_metadata(link).is_err());
+    }
+
+    #[test]
+    fn video_preview_checks_type_and_resolves_regular_files() {
+        let dir = tempdir().unwrap();
+        let video = dir.path().join("封面.MP4");
+        fs::write(&video, "video").unwrap();
+        assert_eq!(
+            video_preview_path(&display(&video)).unwrap(),
+            display(&fs::canonicalize(&video).unwrap())
+        );
+        let text = dir.path().join("file.txt");
+        fs::write(&text, "not a video").unwrap();
+        assert!(video_preview_path(&display(&text)).is_err());
+        let folder = dir.path().join("folder.mp4");
+        fs::create_dir(&folder).unwrap();
+        assert!(video_preview_path(&display(&folder)).is_err());
+        assert!(video_preview_path("relative.mp4").is_err());
     }
 
     #[test]

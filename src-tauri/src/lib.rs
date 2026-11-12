@@ -158,6 +158,15 @@ async fn read_directory(path: String) -> Result<filesystem::DirectoryListing, St
 }
 
 #[tauri::command]
+async fn prepare_video_preview(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    let path = blocking(move || filesystem::video_preview_path(&path)).await?;
+    app.asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|e| format!("无法预览视频：{e}"))?;
+    Ok(path)
+}
+
+#[tauri::command]
 async fn read_image(path: String) -> Result<tauri::ipc::Response, String> {
     blocking(move || filesystem::read_image(&path))
         .await
@@ -294,6 +303,7 @@ pub fn run() {
             search_files,
             read_directory,
             read_image,
+            prepare_video_preview,
             create_folder,
             rename_entry,
             transfer_entries,

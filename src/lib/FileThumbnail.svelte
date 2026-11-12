@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import FileIcon from './FileIcon.svelte';
   import ImagePreview from './ImagePreview.svelte';
+  import VideoThumbnail from './VideoThumbnail.svelte';
+  import { isVideo } from './files';
   import type { FileEntry } from './types';
 
   let { entry, large = false }: { entry: FileEntry; large?: boolean } = $props();
@@ -23,5 +25,5 @@
 </script>
 
 <span bind:this={container} class="file-thumbnail" class:large>
-  {#if visible}<ImagePreview {entry} thumbnail {large} />{:else}<FileIcon {entry} {large} />{/if}
+  {#if visible}{#if isVideo(entry)}<VideoThumbnail {entry} {large} />{:else}<ImagePreview {entry} thumbnail {large} />{/if}{:else}<FileIcon {entry} {large} />{/if}
 </span>

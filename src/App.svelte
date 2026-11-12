@@ -7,7 +7,7 @@
   import ImagePreview from './lib/ImagePreview.svelte';
   import ImagePreviewDialog from './lib/ImagePreviewDialog.svelte';
   import { api, desktop } from './lib/api';
-  import { basename, breadcrumbs, fileKind, formatDate, formatSize, isImage, visibleEntries } from './lib/files';
+  import { basename, breadcrumbs, fileKind, formatDate, formatSize, isImage, isVideo, visibleEntries } from './lib/files';
   import type { AppInfo, Clipboard, DirectoryListing, FileEntry, SortKey, ViewMode } from './lib/types';
   import type { DragDropEvent } from '@tauri-apps/api/webview';
   import { dragClientPosition } from './lib/drag';
@@ -55,6 +55,7 @@
   let clipboardRequest = 0;
   let dragGesture: { x: number; y: number; entry: FileEntry; pointerId: number } | null = null;
   let demoDrag: string[] | null = null;
+  let marquee = $state<{ pointerId: number; startX: number; startY: number; x: number; y: number; active: boolean; additive: boolean; initial: string[] } | null>(null);
   let editingAddress = $state(false);
   let address = $state('');
   let addressInput = $state<HTMLInputElement>();
@@ -425,7 +426,47 @@
     if (desktop && event.button === 0 && !busy) dragGesture = { x: event.clientX, y: event.clientY, entry, pointerId: event.pointerId };
   }
 
+  function beginMarquee(event: PointerEvent) {
+    if (busy || event.button !== 0 || event.pointerType === 'touch' || !(event.target instanceof Element) || event.target.closest('button, input, select, textarea, a')) return;
+    const bounds = fileArea.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom || (fileArea.clientWidth > 0 && event.clientX >= bounds.left + fileArea.clientWidth)) return;
+    event.preventDefault();
+    marquee = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY, active: false, additive: event.ctrlKey || event.metaKey || event.shiftKey, initial: [...selected] };
+  }
+
+  function updateMarquee(event: PointerEvent) {
+    if (!marquee || event.pointerId !== marquee.pointerId) return;
+    if (!(event.buttons & 1) || busy) { marquee = null; return; }
+    const bounds = fileArea.getBoundingClientRect();
+    marquee.x = Math.max(bounds.left, Math.min(bounds.right, event.clientX));
+    marquee.y = Math.max(bounds.top, Math.min(bounds.bottom, event.clientY));
+    if (!marquee.active && Math.hypot(marquee.x - marquee.startX, marquee.y - marquee.startY) < 5) return;
+    marquee.active = true;
+    const left = Math.min(marquee.startX, marquee.x), right = Math.max(marquee.startX, marquee.x);
+    const top = Math.min(marquee.startY, marquee.y), bottom = Math.max(marquee.startY, marquee.y);
+    const next = new Set(marquee.additive ? marquee.initial : []);
+    let last: string | undefined;
+    fileArea.querySelectorAll<HTMLElement>('[data-index]').forEach((element) => {
+      const rect = element.getBoundingClientRect();
+      const entry = entries[Number(element.dataset.index)];
+      if (entry && rect.right > left && rect.left < right && rect.bottom > top && rect.top < bottom) {
+        next.add(entry.path);
+        last = entry.path;
+      }
+    });
+    selected = next;
+    if (last) anchor = last;
+  }
+
+  function endMarquee(event: PointerEvent, cancelled = false) {
+    if (!marquee || event.pointerId !== marquee.pointerId) return;
+    if (cancelled) selected = new Set(marquee.initial);
+    else if (!marquee.active && !marquee.additive) { selected = new Set(); anchor = undefined; }
+    marquee = null;
+  }
+
   function pointerMove(event: PointerEvent) {
+    updateMarquee(event);
     const gesture = dragGesture;
     if (!gesture || event.pointerId !== gesture.pointerId) return;
     if (!(event.buttons & 1) || busy) { dragGesture = null; return; }
@@ -513,6 +554,7 @@
     dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey };
     shiftHeld = event.shiftKey;
     if (event.key === 'Escape') {
+      if (marquee) { selected = new Set(marquee.initial); marquee = null; }
       dropMenu = null;
       context = null;
       optionsOpen = false;
@@ -557,7 +599,7 @@
   }
 </script>
 
-<svelte:window onfocus={() => void syncClipboard()} onpointermove={pointerMove} onpointerup={() => dragGesture = null} onpointercancel={() => dragGesture = null} ondragover={demoDragOver} ondrop={demoDrop} ondragend={() => { demoDrag = null; dropTarget = null; }} ondragleave={(event) => { if (!event.relatedTarget) dropTarget = null; }} onkeydown={keydown} onkeyup={(event) => { dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey }; shiftHeld = event.shiftKey; }} onclick={() => { context = null; optionsOpen = false; dropMenu = null; }} onblur={() => { context = null; optionsOpen = false; dragGesture = null; dropTarget = null; shiftHeld = false; }} onresize={() => context = null} />
+<svelte:window onfocus={() => void syncClipboard()} onpointermove={pointerMove} onpointerup={(event) => { dragGesture = null; endMarquee(event); }} onpointercancel={(event) => { dragGesture = null; endMarquee(event, true); }} ondragover={demoDragOver} ondrop={demoDrop} ondragend={() => { demoDrag = null; dropTarget = null; }} ondragleave={(event) => { if (!event.relatedTarget) dropTarget = null; }} onkeydown={keydown} onkeyup={(event) => { dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey }; shiftHeld = event.shiftKey; }} onclick={() => { context = null; optionsOpen = false; dropMenu = null; }} onblur={() => { context = null; optionsOpen = false; dragGesture = null; dropTarget = null; shiftHeld = false; if (marquee) selected = new Set(marquee.initial); marquee = null; }} onresize={() => context = null} />
 
 <div class="app-shell" data-theme={preferences.dark ? 'dark' : 'light'}>
   <header class="app-header">
@@ -656,7 +698,7 @@
 
           {#if dropTarget}<div class="drop-hint" role="status">松开后选择复制或移动到「{basename(dropTarget) || dropTarget}」 · Ctrl 复制 · Shift 移动</div>{/if}
 
-          <div class="file-area" data-drop-path={directory?.path} class:drop-target={dropRegion === 'browser' && dropTarget === directory?.path} class:loading class:list-view={preferences.view === 'list'} bind:this={fileArea} role="group" aria-label="文件和文件夹" aria-busy={busy} oncontextmenu={(event) => contextMenu(event)}>
+          <div class="file-area" data-drop-path={directory?.path} class:drop-target={dropRegion === 'browser' && dropTarget === directory?.path} class:loading class:list-view={preferences.view === 'list'} bind:this={fileArea} role="group" aria-label="文件和文件夹" aria-busy={busy} onpointerdown={beginMarquee} oncontextmenu={(event) => contextMenu(event)}>
             {#if initialError}
               <div class="empty-state"><span class="empty-icon error"><CircleAlert size={34} strokeWidth={1.3} /></span><h2>暂时无法打开文件夹</h2><p>{initialError}</p><button class="button" onclick={() => info ? navigate(info.home) : initialize()}><RotateCw size={15} />重新尝试</button></div>
             {:else if !directory && loading}
@@ -668,7 +710,7 @@
                 {#each entries as entry, index (entry.path)}
                   <button class="file-card" draggable={!desktop && !busy} onpointerdown={(event) => beginDrag(event, entry)} ondragstart={(event) => demoDragStart(event, entry)} data-drop-path={entry.isDir ? entry.path : undefined} class:drop-target={dropRegion === 'browser' && dropTarget === entry.path} class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} title={`${entry.name}\n${entry.isDir ? '文件夹' : formatSize(entry.size)}\n双击打开`} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
                     {#if selected.has(entry.path)}<span class="selected-check"><Check size={10} strokeWidth={3} /></span>{/if}
-                    <span class="file-visual">{#if isImage(entry)}<FileThumbnail {entry} large />{:else}<FileIcon {entry} large />{/if}</span>
+                    <span class="file-visual">{#if isImage(entry) || isVideo(entry)}<FileThumbnail {entry} large />{:else}<FileIcon {entry} large />{/if}</span>
                     <span class="file-name">{entry.name}</span><span class="file-caption">{entry.isDir ? folderLabels[entry.name] ?? '文件夹' : formatSize(entry.size)}</span>
                   </button>
                 {/each}
@@ -678,7 +720,7 @@
               <div class="file-list">
                 {#each entries as entry, index (entry.path)}
                   <button class="file-row" draggable={!desktop && !busy} onpointerdown={(event) => beginDrag(event, entry)} ondragstart={(event) => demoDragStart(event, entry)} data-drop-path={entry.isDir ? entry.path : undefined} class:drop-target={dropRegion === 'browser' && dropTarget === entry.path} class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
-                    <span class="row-name">{#if isImage(entry)}<FileThumbnail {entry} />{:else}<FileIcon {entry} />{/if}<span>{entry.name}</span></span><span class="row-date">{formatDate(entry.modified)}</span><span class="row-type">{fileKind(entry)}</span><span class="row-size">{entry.isDir ? '—' : formatSize(entry.size)}</span>
+                    <span class="row-name">{#if isImage(entry) || isVideo(entry)}<FileThumbnail {entry} />{:else}<FileIcon {entry} />{/if}<span>{entry.name}</span></span><span class="row-date">{formatDate(entry.modified)}</span><span class="row-type">{fileKind(entry)}</span><span class="row-size">{entry.isDir ? '—' : formatSize(entry.size)}</span>
                   </button>
                 {/each}
               </div>
@@ -700,7 +742,7 @@
             <div class="inspector-divider"></div>
             <dl class="properties"><div><dt>位置</dt><dd class="path-value" title={focused?.path ?? directory?.path}>{selected.size > 1 ? directory?.path : focused?.path ?? directory?.path ?? '—'}</dd></div>{#if focused}<div><dt>类型</dt><dd>{fileKind(focused)}</dd></div>{#if !focused.isDir}<div><dt>大小</dt><dd>{formatSize(focused.size)}</dd></div>{/if}<div><dt>修改时间</dt><dd>{formatDate(focused.modified)}</dd></div>{:else if selected.size > 1}<div><dt>已选项目</dt><dd>{selected.size} 项</dd></div><div><dt>文件大小</dt><dd>{formatSize(selectedSize)}</dd></div>{:else}<div><dt>内容</dt><dd>{directory?.entries.filter((e) => preferences.hidden || !e.hidden).length ?? 0} 个项目</dd></div><div><dt>文件夹</dt><dd>{directory?.entries.filter((e) => e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div><div><dt>文件</dt><dd>{directory?.entries.filter((e) => !e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div>{/if}</dl>
             {#if focused}<button class="button inspector-open" onclick={() => focused!.isDir ? openEntry(focused!) : openExternal(focused!)} disabled={busy}><ExternalLink size={15} />{focused.isDir ? '打开文件夹' : '使用默认应用打开'}<ArrowRight size={14} /></button>{/if}
-            <div class="inspector-tip"><span class="tip-label"><Info size={14} />小提示</span><p>{selected.size ? `按住 ${shortcutModifier} 点选多个项目，或按 Shift 连续选择。` : '单击查看文件信息，双击打开。也可以在地址栏中输入路径。'}</p></div>
+            <div class="inspector-tip"><span class="tip-label"><Info size={14} />小提示</span><p>{selected.size ? `按住 ${shortcutModifier} 点选多个项目，按 Shift 连续选择，或拖动空白处框选。` : '单击查看文件信息，双击打开。也可以在地址栏中输入路径。'}</p></div>
           </aside>
         {/if}
       </div>
@@ -710,6 +752,8 @@
   </div>
 
   {#if notice}<div class="toast" class:error={notice.error} role={notice.error ? 'alert' : 'status'}>{#if notice.error}<CircleAlert size={18} />{:else}<Check size={18} />{/if}<span>{notice.text}</span><button class="icon-button compact" title="关闭提示" aria-label="关闭提示" onclick={() => notice = null}><X size={15} /></button></div>{/if}
+
+  {#if marquee?.active}<div class="selection-marquee" aria-hidden="true" style={`left: ${Math.min(marquee.startX, marquee.x)}px; top: ${Math.min(marquee.startY, marquee.y)}px; width: ${Math.abs(marquee.x - marquee.startX)}px; height: ${Math.abs(marquee.y - marquee.startY)}px`}></div>{/if}
 
   {#if dropMenu}<div class="context-menu drop-menu" role="menu" aria-label="选择拖放操作" style={`left: ${dropMenu.x}px; top: ${dropMenu.y}px`}>
     <button role="menuitem" onclick={() => confirmDrop('copy')}><Copy size={16} /><span>复制到此处</span><kbd>Ctrl</kbd></button>

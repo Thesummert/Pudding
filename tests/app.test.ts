@@ -76,6 +76,39 @@ afterEach(async () => {
 });
 
 describe('file manager interactions', () => {
+  it.each(['grid', 'list'])('selects files with a marquee in %s view and supports additive selection', async (view) => {
+    if (view === 'list') await click(button('列表视图'));
+    const area = host.querySelector<HTMLElement>('.file-area')!;
+    vi.spyOn(area, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 500, 500));
+    const cards = [...host.querySelectorAll<HTMLElement>(view === 'grid' ? '.file-card' : '.file-row')];
+    cards.forEach((card, index) => vi.spyOn(card, 'getBoundingClientRect').mockReturnValue(new DOMRect(30 + index * 45, 30, 30, 30)));
+    function pointer(target: EventTarget, type: string, x: number, y: number, options: { ctrlKey?: boolean; buttons?: number } = {}) {
+      target.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 7, button: 0, buttons: options.buttons ?? 1, clientX: x, clientY: y, ctrlKey: options.ctrlKey }));
+    }
+    pointer(area, 'pointerdown', 10, 10);
+    pointer(window, 'pointermove', 110, 70);
+    await tick();
+    expect(host.querySelector('.selection-marquee')).not.toBeNull();
+    expect(cards.filter((card) => card.getAttribute('aria-pressed') === 'true')).toHaveLength(2);
+    pointer(window, 'pointerup', 110, 70, { buttons: 0 });
+    await tick();
+    expect(host.querySelector('.selection-marquee')).toBeNull();
+    pointer(area, 'pointerdown', 115, 10, { ctrlKey: true });
+    pointer(window, 'pointermove', 155, 70, { ctrlKey: true });
+    pointer(window, 'pointerup', 155, 70, { buttons: 0, ctrlKey: true });
+    await tick();
+    expect(cards.filter((card) => card.getAttribute('aria-pressed') === 'true')).toHaveLength(3);
+    const transfer = vi.spyOn(api, 'writeClipboard').mockResolvedValue();
+    cards[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await tick();
+    await click(menuItem('复制'));
+    expect(transfer).toHaveBeenCalledWith({ paths: cards.slice(0, 3).map((card) => `/home/pudding/${card.getAttribute('aria-label')}`), mode: 'copy' });
+    pointer(area, 'pointerdown', 10, 10);
+    pointer(window, 'pointerup', 10, 10, { buttons: 0 });
+    await tick();
+    expect(cards.filter((card) => card.getAttribute('aria-pressed') === 'true')).toHaveLength(0);
+  });
+
   it('restores the startup directory and records the active directory', async () => {
     const startup = vi.spyOn(api, 'startupDirectory').mockResolvedValue('/home/pudding/Documents');
     const record = vi.spyOn(api, 'setWindowDirectory').mockResolvedValue();

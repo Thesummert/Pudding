@@ -12,6 +12,10 @@ export function isImage(entry: FileEntry): boolean {
   return !entry.isDir && imageMimeType(entry.extension) !== undefined;
 }
 
+export function isVideo(entry: FileEntry): boolean {
+  return !entry.isDir && ['mp4', 'mov', 'mkv', 'avi', 'webm'].includes(entry.extension.toLowerCase());
+}
+
 export function formatSize(bytes: number): string {
   if (!bytes) return '0 B';
   const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), 4);
@@ -28,7 +32,7 @@ export function fileKind(entry: FileEntry): string {
   if (entry.isDir) return '文件夹';
   const ext = entry.extension.toLowerCase();
   if (isImage(entry)) return '图像';
-  if (['mp4', 'mov', 'mkv', 'avi', 'webm'].includes(ext)) return '视频';
+  if (isVideo(entry)) return '视频';
   if (['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac'].includes(ext)) return '音频';
   if (['zip', 'rar', '7z', 'gz', 'tar', 'xz'].includes(ext)) return '压缩文件';
   if (ext === 'pdf') return 'PDF 文档';

@@ -1,5 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core';
 import type { AppInfo, Clipboard, DirectoryListing, FileEntry } from './types';
 import { getCurrentWebview, type DragDropEvent } from '@tauri-apps/api/webview';
 import { imageMimeType } from './files';
@@ -50,6 +50,10 @@ export const api = {
   trash: (paths: string[]) => call<void>('trash_entries', { paths }),
   delete: (paths: string[]) => call<void>('delete_entries', { paths }),
   open: (path: string) => call<void>('open_entry', { path }),
+  videoSource: async (path: string): Promise<string> => {
+    if (!desktop) throw new Error('浏览器演示无法读取本地视频。');
+    return convertFileSrc(await invoke<string>('prepare_video_preview', { path }));
+  },
   image: async (path: string, extension: string): Promise<string> => {
     const bytes = await call<ArrayBuffer | number[]>('read_image', { path });
     return URL.createObjectURL(new Blob([bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes)], { type: imageMimeType(extension) }));
