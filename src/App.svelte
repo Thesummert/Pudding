@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert } from '@lucide/svelte';
+  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert } from '@lucide/svelte';
   import FileIcon from './lib/FileIcon.svelte';
   import FileThumbnail from './lib/FileThumbnail.svelte';
   import NameDialog from './lib/NameDialog.svelte';
@@ -34,12 +34,18 @@
   let searching = $state(false);
   let scanned = $state(0);
   let searchRequest = 0;
+  let searchIdentity = '';
+  let directoryPath = $derived(directory?.path);
   let sort = $state<SortKey>('name');
   let descending = $state(false);
   let selected = $state(new Set<string>());
   let anchor = $state<string>();
   let history = $state<string[]>([]);
   let historyIndex = $state(-1);
+  type Tab = { id: number; path: string; history: string[]; historyIndex: number };
+  let tabs = $state<Tab[]>([{ id: 1, path: '', history: [], historyIndex: -1 }]);
+  let activeTab = $state(1);
+  let nextTabId = 2;
   let clipboard = $state<Clipboard>(null);
   let dropTarget = $state<string | null>(null);
   let dropRegion = $state<'browser' | 'sidebar' | 'breadcrumbs' | null>(null);
@@ -90,7 +96,7 @@
   });
 
   $effect(() => {
-    const path = directory?.path;
+    const path = directoryPath;
     const term = query.trim();
     const hidden = preferences.hidden;
     const content = searchContent;
@@ -98,7 +104,9 @@
     let cancelled = false;
     const searchId = ++searchRequest;
     scanned = 0;
-    searchResults = null;
+    const identity = JSON.stringify([path, term, hidden, content]);
+    if (identity !== searchIdentity) searchResults = null;
+    searchIdentity = identity;
     searching = !!(path && term && desktop);
     if (path && term) {
       const timer = setTimeout(() => {
@@ -146,7 +154,7 @@
     initialError = '';
     try {
       info = await api.info();
-      await navigate(info.home);
+      await navigate(new URLSearchParams(window.location.search).get('path') || info.home);
     } catch (error) {
       initialError = errorMessage(error);
       loading = false;
@@ -175,12 +183,49 @@
         history = [...history.slice(0, historyIndex + 1), result.path];
         historyIndex = history.length - 1;
       }
+      tabs = tabs.map((tab) => tab.id === activeTab ? { ...tab, path: result.path, history: [...history], historyIndex } : tab);
       if (fileArea && !refresh) fileArea.scrollTop = 0;
     } catch (error) {
       if (id !== request) return;
       if (!directory) initialError = errorMessage(error);
       else notify(errorMessage(error), true);
     } finally { if (id === request) loading = false; }
+  }
+
+  function switchTab(id: number) {
+    if (busy || id === activeTab) return;
+    const tab = tabs.find((item) => item.id === id);
+    if (!tab?.path) return;
+    activeTab = id;
+    history = [...tab.history];
+    historyIndex = tab.historyIndex;
+    query = '';
+    selected = new Set();
+    anchor = undefined;
+    preview = null;
+    void api.watch(tab.path).catch((error) => notify(errorMessage(error), true));
+    void navigate(tab.path, tab.historyIndex, true);
+  }
+
+  function newTab(path = directory?.path) {
+    if (busy || !path) return;
+    const id = nextTabId++;
+    tabs = [...tabs, { id, path, history: [path], historyIndex: 0 }];
+    switchTab(id);
+  }
+
+  async function openInWindow(path: string) {
+    context = null;
+    try { await api.openWindow(path); }
+    catch (error) { notify(errorMessage(error), true); }
+  }
+
+  function closeTab(id: number) {
+    if (busy || tabs.length <= 1) return;
+    const index = tabs.findIndex((tab) => tab.id === id);
+    if (index < 0) return;
+    if (id === activeTab) switchTab(tabs[index === tabs.length - 1 ? index - 1 : index + 1].id);
+    tabs = tabs.filter((tab) => tab.id !== id);
   }
 
   function refresh() { if (directory && !busy) void navigate(directory.path, undefined, true); }
@@ -427,7 +472,7 @@
     if (entry && !selected.has(entry.path)) selected = new Set([entry.path]);
     if (!entry) selected = new Set();
     optionsOpen = false;
-    context = { x: Math.max(8, Math.min(event.clientX, innerWidth - 220)), y: Math.max(8, Math.min(event.clientY, innerHeight - 360)) };
+    context = { x: Math.max(8, Math.min(event.clientX, innerWidth - 220)), y: Math.max(8, Math.min(event.clientY, innerHeight - 450)) };
   }
 
   function setSort(key: SortKey) {
@@ -445,6 +490,8 @@
     if (document.querySelector('dialog[open]')) return;
     const target = event.target as HTMLElement;
     const modifier = event.ctrlKey || event.metaKey;
+    if (modifier && event.key.toLowerCase() === 't') { event.preventDefault(); newTab(); return; }
+    if (modifier && event.key.toLowerCase() === 'w') { event.preventDefault(); closeTab(activeTab); return; }
     if (modifier && event.key.toLowerCase() === 'l') { event.preventDefault(); void editAddress(); return; }
     if (modifier && event.key.toLowerCase() === 'f') { event.preventDefault(); searchInput.focus(); return; }
     if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
@@ -517,6 +564,17 @@
     </aside>
 
     <main class="main-shell">
+      <div class="tab-bar" aria-label="文件夹标签页">
+        <div class="tab-list" role="tablist" aria-label="文件夹标签页">
+          {#each tabs as tab (tab.id)}
+            <div class="tab" class:active={tab.id === activeTab}>
+              <button class="tab-select" role="tab" aria-selected={tab.id === activeTab} title={tab.path} disabled={busy} onclick={() => switchTab(tab.id)}><Folder size={14} /><span>{info?.places.find((place) => place.path === tab.path)?.name ?? (tab.path ? basename(tab.path) : '文件夹')}</span></button>
+              {#if tabs.length > 1}<button class="tab-close" aria-label="关闭标签页" title="关闭标签页" disabled={busy} onclick={() => closeTab(tab.id)}><X size={13} /></button>{/if}
+            </div>
+          {/each}
+        </div>
+        <button class="icon-button tab-add" title="新建标签页" aria-label="新建标签页" disabled={busy || !directory} onclick={() => newTab()}><Plus size={17} /></button>
+      </div>
       <div class="navigation-bar">
         <div class="navigation-controls">
           <button class="icon-button" title="后退 (Alt+←)" aria-label="后退" disabled={busy || historyIndex <= 0} onclick={back}><ArrowLeft size={19} /></button>
@@ -624,6 +682,7 @@
   {#if context}<div class="context-menu" role="menu" style={`left: ${context.x}px; top: ${context.y}px`}>
     {#if focused && isImage(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览图片</span><kbd>Space</kbd></button><button role="menuitem" onclick={() => { context = null; void openExternal(focused!); }}><ExternalLink size={16} /><span>使用默认应用打开</span></button>{/if}
     {#if focused && !isImage(focused)}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>打开</span><kbd>Enter</kbd></button>{/if}
+    {#if focused?.isDir}<button role="menuitem" onclick={() => { const path = focused!.path; context = null; newTab(path); }}><FolderPlus size={16} /><span>在新标签页中打开</span></button><button role="menuitem" onclick={() => void openInWindow(focused!.path)}><ExternalLink size={16} /><span>在新窗口中打开</span></button>{/if}
     {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{shortcutModifier} C</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{shortcutModifier} X</kbd></button>{/if}
     <button role="menuitem" onclick={paste} disabled={busy || (!desktop && !clipboard)}><ClipboardPaste size={16} /><span>粘贴</span><kbd>{shortcutModifier} V</kbd></button>
     <div class="menu-divider"></div>
@@ -638,5 +697,5 @@
 
   <dialog class="modal trash-modal" bind:this={trashDialog} oncancel={(event) => { if (operating) event.preventDefault(); }}><div class="modal-top"><span class="modal-icon danger"><Trash2 size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => trashDialog.close()} disabled={operating}><X size={18} /></button></div><h2>移入回收站？</h2><p>将选中的 {selected.size} 个项目移入系统回收站。你可以稍后从系统回收站中恢复。</p><div class="modal-actions"><button class="button" onclick={() => trashDialog.close()} disabled={operating}>取消</button><button class="button danger-button" onclick={moveToTrash} disabled={busy}>{#if operating}<LoaderCircle size={16} class="spin" />{/if}移入回收站</button></div></dialog>
 
-  <dialog class="modal help-modal" bind:this={helpDialog}><div class="modal-top"><span class="modal-icon"><Keyboard size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => helpDialog.close()}><X size={18} /></button></div><h2>键盘快捷键</h2><p>Pudding 0.1 · Tauri + Svelte</p><dl class="shortcut-list">{#each [[`${shortcutModifier} L`, '输入文件夹路径'], [`${shortcutModifier} F`, '搜索文件名或内容'], ['Alt ↑ / ← / →', '上一级 / 后退 / 前进'], [`${shortcutModifier} Shift N`, '新建文件夹'], [`${shortcutModifier} A`, '选择所有项目'], [`${shortcutModifier} C / X / V`, '复制 / 剪切 / 粘贴'], ['F2', '重命名'], ['Delete', '移入回收站'], ['F5', '刷新'], [`${shortcutModifier} Shift .`, '显示或隐藏隐藏文件']] as [keys, label]}<div><dt>{label}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{#if !desktop}<p class="help-demo">当前为浏览器演示。使用 <code>npm run tauri dev</code> 启动桌面版，管理真实文件。</p>{/if}</dialog>
+  <dialog class="modal help-modal" bind:this={helpDialog}><div class="modal-top"><span class="modal-icon"><Keyboard size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => helpDialog.close()}><X size={18} /></button></div><h2>键盘快捷键</h2><p>Pudding 0.1 · Tauri + Svelte</p><dl class="shortcut-list">{#each [[`${shortcutModifier} T / W`, '新建 / 关闭标签页'], [`${shortcutModifier} L`, '输入文件夹路径'], [`${shortcutModifier} F`, '搜索文件名或内容'], ['Alt ↑ / ← / →', '上一级 / 后退 / 前进'], [`${shortcutModifier} Shift N`, '新建文件夹'], [`${shortcutModifier} A`, '选择所有项目'], [`${shortcutModifier} C / X / V`, '复制 / 剪切 / 粘贴'], ['F2', '重命名'], ['Delete', '移入回收站'], ['F5', '刷新'], [`${shortcutModifier} Shift .`, '显示或隐藏隐藏文件']] as [keys, label]}<div><dt>{label}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{#if !desktop}<p class="help-demo">当前为浏览器演示。使用 <code>npm run tauri dev</code> 启动桌面版，管理真实文件。</p>{/if}</dialog>
 </div>

@@ -126,13 +126,14 @@ async fn open_entry(app: tauri::AppHandle, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn watch_directory(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    blocking(move || search::watch(&app.state::<search::SearchState>(), app.clone(), path)).await
+async fn watch_directory(window: tauri::WebviewWindow, path: String) -> Result<(), String> {
+    blocking(move || search::watch(&window.state::<search::SearchState>(), window.clone(), path))
+        .await
 }
 
 #[tauri::command]
 async fn search_files(
-    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     path: String,
     query: String,
     hidden: bool,
@@ -141,28 +142,64 @@ async fn search_files(
 ) -> Result<Vec<filesystem::FileEntry>, String> {
     blocking(move || {
         search::search(
-            &app.state::<search::SearchState>(),
+            &window.state::<search::SearchState>(),
             path,
             query,
             hidden,
             search_content,
             |count| {
-                let _ = app.emit("search-progress", (request_id, count));
+                let _ = window.emit("search-progress", (request_id, count));
             },
         )
     })
     .await
 }
 
+#[tauri::command]
+async fn open_directory_window(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let path = blocking(move || filesystem::resolve_directory(&path)).await?;
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("path", &path.to_string_lossy())
+        .finish();
+    let label = format!(
+        "folder-{}",
+        std::sync::atomic::AtomicU64::fetch_add(
+            &WINDOW_ID,
+            1,
+            std::sync::atomic::Ordering::Relaxed
+        )
+    );
+    tauri::WebviewWindowBuilder::new(
+        &app,
+        label,
+        tauri::WebviewUrl::App(format!("index.html?{query}").into()),
+    )
+    .title("Pudding · 文件管理器")
+    .inner_size(1280.0, 820.0)
+    .min_inner_size(860.0, 580.0)
+    .center()
+    .build()
+    .map_err(|e| format!("无法打开新窗口：{e}"))?;
+    Ok(())
+}
+
+static WINDOW_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(clipboard::SystemClipboard::default())
         .manage(search::SearchState::default())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                search::unwatch(&window.state::<search::SearchState>(), window.label());
+            }
+        })
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_app_info,
             watch_directory,
+            open_directory_window,
             search_files,
             read_directory,
             read_image,

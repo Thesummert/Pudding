@@ -7,11 +7,11 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tauri::{AppHandle, Emitter};
+use tauri::{Emitter, WebviewWindow};
 
 #[derive(Default)]
 pub struct SearchState {
-    watcher: Mutex<Option<RecommendedWatcher>>,
+    watchers: Mutex<HashMap<String, RecommendedWatcher>>,
     cache: Arc<Mutex<HashMap<(String, bool), Vec<Indexed>>>>,
 }
 #[derive(Clone)]
@@ -20,24 +20,35 @@ struct Indexed {
     text: String,
 }
 
-pub fn watch(state: &SearchState, app: AppHandle, path: String) -> Result<(), String> {
+pub fn watch(state: &SearchState, window: WebviewWindow, path: String) -> Result<(), String> {
     let root = filesystem::resolve_directory(&path)?;
     let cache = state.cache.clone();
+    let label = window.label().to_string();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if event.is_ok() {
+        if event.is_ok_and(|event| !matches!(event.kind, notify::EventKind::Access(_))) {
             if let Ok(mut cache) = cache.lock() {
                 cache.clear();
             }
-            let _ = app.emit("filesystem-changed", ());
+            let _ = window.emit("filesystem-changed", ());
         }
     })
     .map_err(|e| e.to_string())?;
     watcher
         .watch(&root, RecursiveMode::Recursive)
         .map_err(|e| format!("无法监听文件夹：{e}"))?;
-    *state.watcher.lock().map_err(|e| e.to_string())? = Some(watcher);
+    state
+        .watchers
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(label, watcher);
     state.cache.lock().map_err(|e| e.to_string())?.clear();
     Ok(())
+}
+
+pub fn unwatch(state: &SearchState, label: &str) {
+    if let Ok(mut watchers) = state.watchers.lock() {
+        watchers.remove(label);
+    }
 }
 
 pub fn search(

@@ -252,6 +252,36 @@ describe('file manager interactions', () => {
     expect(revoke).toHaveBeenCalledWith(current);
   });
 
+  it('opens a folder from the context menu in a tab or window', async () => {
+    const openWindow = vi.spyOn(api, 'openWindow').mockResolvedValue();
+    await contextMenu('Documents');
+    await click(menuItem('在新窗口中打开'));
+    expect(openWindow).toHaveBeenCalledWith('/home/pudding/Documents');
+    await contextMenu('Documents');
+    await click(menuItem('在新标签页中打开'));
+    await vi.waitFor(() => expect(host.querySelectorAll('[role=tab]')).toHaveLength(2));
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+  });
+
+  it('keeps navigation history separate across tabs and closes the active tab', async () => {
+    await doubleClick('Documents');
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    await click(button('新建标签页'));
+    await vi.waitFor(() => expect(host.querySelectorAll('[role=tab]')).toHaveLength(2));
+    await vi.waitFor(() => expect(button('上一级').disabled).toBe(false));
+    await click(button('上一级'));
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('主文件夹.'));
+    await click(host.querySelectorAll<HTMLButtonElement>('[role=tab]')[0]);
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    await click(button('后退'));
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('主文件夹.'));
+    await click(button('前进'));
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    await click(host.querySelector<HTMLElement>('.tab.active .tab-close')!);
+    await vi.waitFor(() => expect(host.querySelectorAll('[role=tab]')).toHaveLength(1));
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('主文件夹.'));
+  });
+
   it('navigates with history, parent controls and manually entered paths', async () => {
     await doubleClick('Documents');
     await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));

@@ -31,6 +31,10 @@ export const api = {
   listenDrop: (handler: (event: DragDropEvent) => void): Promise<() => void> => desktop
     ? getCurrentWebview().onDragDropEvent((event) => handler(event.payload))
     : Promise.resolve(() => {}),
+  openWindow: async (path: string) => {
+    if (desktop) await invoke('open_directory_window', { path });
+    else { const url = new URL(window.location.href); url.searchParams.set('path', path); window.open(url.toString(), '_blank'); }
+  },
   watch: (path: string) => desktop ? invoke<void>('watch_directory', { path }) : Promise.resolve(),
   listenChanges: (handler: () => void) => desktop ? listen('filesystem-changed', handler) : Promise.resolve(() => {}),
   listenSearchProgress: (handler: (progress: [number, number]) => void) => desktop ? listen<[number, number]>('search-progress', (event) => handler(event.payload)) : Promise.resolve(() => {}),

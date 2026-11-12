@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "Only the local main window may use core desktop APIs.",
-  "windows": ["main"],
+  "description": "Local application windows may use core desktop APIs.",
+  "windows": ["main", "folder-*"],
   "permissions": ["core:default"]
 }

@@ -5,6 +5,10 @@
   import type { FileEntry } from './types';
 
   let { entry, actualSize = false, thumbnail = false, large = false, interactive = false }: { entry: FileEntry; actualSize?: boolean; thumbnail?: boolean; large?: boolean; interactive?: boolean } = $props();
+  let imagePath = $derived(entry.path);
+  let imageExtension = $derived(entry.extension);
+  let imageModified = $derived(entry.modified);
+  let imageSize = $derived(entry.size);
   let source = $state('');
   let loaded = $state(false);
   let error = $state('');
@@ -14,7 +18,7 @@
 
   $effect(() => {
     void actualSize;
-    void entry.path;
+    void imagePath;
     zoom = 1;
     offset = { x: 0, y: 0 };
   });
@@ -74,7 +78,7 @@
   }
 
   $effect(() => {
-    const { path, extension, modified, size } = entry;
+    const path = imagePath, extension = imageExtension, modified = imageModified, size = imageSize;
     // Include metadata so refreshing an externally modified image reloads it.
     void modified;
     void size;
