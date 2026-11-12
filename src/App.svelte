@@ -55,6 +55,8 @@
   let clipboardRequest = 0;
   let dragGesture: { x: number; y: number; entry: FileEntry; pointerId: number } | null = null;
   let demoDrag: string[] | null = null;
+  let pendingOpenDirectories = $state<string[]>([]);
+  let openRequestsReady = $state(false);
   let marquee = $state<{ pointerId: number; startX: number; startY: number; x: number; y: number; active: boolean; additive: boolean; initial: string[] } | null>(null);
   let editingAddress = $state(false);
   let address = $state('');
@@ -121,13 +123,36 @@
     }
   });
 
+  $effect(() => {
+    if (!openRequestsReady || busy || !pendingOpenDirectories.length) return;
+    const [path, ...others] = pendingOpenDirectories;
+    pendingOpenDirectories = [];
+    void navigate(path);
+    for (const other of others) void api.openWindow(other).catch((error) => notify(errorMessage(error), true));
+  });
+
   onMount(() => {
-    void initialize();
     void syncClipboard();
     let disposed = false;
     let unlisten: (() => void) | undefined;
     let unlistenChanges: (() => void) | undefined;
     let unlistenProgress: (() => void) | undefined;
+    let unlistenOpen: (() => void) | undefined;
+    async function pullOpenDirectories() {
+      try {
+        const paths = await api.takeOpenDirectories();
+        if (!disposed && paths.length) pendingOpenDirectories = [...pendingOpenDirectories, ...paths];
+      } catch (error) { if (!disposed) notify(errorMessage(error), true); }
+    }
+    void (async () => {
+      try {
+        const cleanup = await api.listenOpenDirectories(() => void pullOpenDirectories());
+        if (disposed) { cleanup(); return; }
+        unlistenOpen = cleanup;
+        await pullOpenDirectories();
+      } catch (error) { if (!disposed) notify(errorMessage(error), true); }
+      if (!disposed) { await initialize(); if (!disposed) openRequestsReady = true; }
+    })();
     void api.listenSearchProgress(([id, count]) => { if (id === searchRequest) scanned = count; }).then((cleanup) => { if (disposed) cleanup(); else unlistenProgress = cleanup; }).catch((error) => notify(errorMessage(error), true));
     let changeTimer: ReturnType<typeof setTimeout>;
     function applyChanges() {
@@ -141,7 +166,7 @@
     void api.listenDrop(nativeDrop).then((cleanup) => {
       if (disposed) cleanup(); else unlisten = cleanup;
     }).catch((error) => notify(errorMessage(error), true));
-    return () => { disposed = true; unlisten?.(); unlistenChanges?.(); unlistenProgress?.(); clearTimeout(changeTimer); clipboardRequest += 1; request += 1; clearTimeout(noticeTimeout); };
+    return () => { disposed = true; unlisten?.(); unlistenChanges?.(); unlistenProgress?.(); unlistenOpen?.(); clearTimeout(changeTimer); clipboardRequest += 1; request += 1; clearTimeout(noticeTimeout); };
   });
 
   function notify(text: string, error = false) {

@@ -1,5 +1,6 @@
 mod clipboard;
 mod filesystem;
+mod open_requests;
 mod rename;
 mod search;
 mod session;
@@ -139,6 +140,11 @@ async fn get_app_info() -> Result<filesystem::AppInfo, String> {
 }
 
 #[tauri::command]
+fn take_open_directories(state: tauri::State<'_, open_requests::OpenRequests>) -> Vec<String> {
+    state.take()
+}
+
+#[tauri::command]
 fn startup_directory(state: tauri::State<'_, session::Session>) -> Option<String> {
     state.startup_path()
 }
@@ -275,7 +281,10 @@ pub fn run() {
     tauri::Builder::default()
         .manage(clipboard::SystemClipboard::default())
         .manage(search::SearchState::default())
+        .manage(open_requests::OpenRequests::default())
         .setup(|app| {
+            app.state::<open_requests::OpenRequests>()
+                .push(open_requests::arguments(std::env::args_os().skip(1)));
             let session = app
                 .path()
                 .app_data_dir()
@@ -297,6 +306,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_info,
             startup_directory,
+            take_open_directories,
             set_window_directory,
             watch_directory,
             open_directory_window,
@@ -317,6 +327,59 @@ pub fn run() {
             start_file_drag,
             drop_modifiers
         ])
-        .run(tauri::generate_context!())
-        .expect("无法启动 Pudding");
+        .build(tauri::generate_context!())
+        .expect("无法启动 Pudding")
+        .run({
+            #[cfg(target_os = "macos")]
+            let mut ready = false;
+            move |app, event| {
+                #[cfg(target_os = "macos")]
+                if matches!(event, tauri::RunEvent::Ready) {
+                    ready = true;
+                }
+                #[cfg(target_os = "macos")]
+                if let tauri::RunEvent::Opened { urls } = event {
+                    if app
+                        .state::<open_requests::OpenRequests>()
+                        .push(urls.iter().filter_map(open_requests::local_url))
+                    {
+                        // The OS may deliver an open event before Tauri creates its
+                        // configured main window. Its frontend will drain the queue.
+                        if !ready {
+                            return;
+                        }
+                        let windows = app.webview_windows();
+                        if let Some(window) =
+                            windows.get("main").or_else(|| windows.values().next())
+                        {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                            let _ = app.emit_to(
+                                tauri::EventTarget::webview(window.label()),
+                                "open-directories",
+                                (),
+                            );
+                        } else {
+                            // A background macOS app may have no remaining windows.
+                            if let Err(error) = tauri::WebviewWindowBuilder::new(
+                                app,
+                                "main",
+                                tauri::WebviewUrl::App("index.html".into()),
+                            )
+                            .title("Pudding · 文件管理器")
+                            .inner_size(1280.0, 820.0)
+                            .min_inner_size(860.0, 580.0)
+                            .center()
+                            .build()
+                            {
+                                eprintln!("无法打开窗口：{error}");
+                            }
+                        }
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = (app, event);
+            }
+        });
 }

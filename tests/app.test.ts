@@ -109,6 +109,29 @@ describe('file manager interactions', () => {
     expect(cards.filter((card) => card.getAttribute('aria-pressed') === 'true')).toHaveLength(0);
   });
 
+  it('opens requested directories at startup and while running', async () => {
+    await unmount(app);
+    let onOpen!: () => void;
+    const stopOpen = vi.fn();
+    vi.spyOn(api, 'listenOpenDirectories').mockImplementation(async (handler) => { onOpen = handler; return stopOpen; });
+    const take = vi.spyOn(api, 'takeOpenDirectories').mockResolvedValueOnce(['/home/pudding/Documents']).mockResolvedValue([]);
+    const openWindow = vi.spyOn(api, 'openWindow').mockResolvedValue();
+    app = mount(App, { target: host });
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    take.mockResolvedValueOnce(['/home/pudding/Downloads', '/home/pudding/Pictures']);
+    onOpen();
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('下载.'));
+    expect(openWindow).toHaveBeenCalledWith('/home/pudding/Pictures');
+    take.mockResolvedValueOnce(['/home/pudding/missing']);
+    onOpen();
+    await vi.waitFor(() => expect(host.querySelector('[role="alert"]')).not.toBeNull());
+    expect(host.querySelector('h1')?.textContent).toBe('下载.');
+    await unmount(app);
+    expect(stopOpen).toHaveBeenCalledOnce();
+    app = mount(App, { target: host });
+    await tick();
+  });
+
   it('restores the startup directory and records the active directory', async () => {
     const startup = vi.spyOn(api, 'startupDirectory').mockResolvedValue('/home/pudding/Documents');
     const record = vi.spyOn(api, 'setWindowDirectory').mockResolvedValue();

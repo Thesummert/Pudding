@@ -42,6 +42,8 @@ export const api = {
   search: (path: string, query: string, hidden: boolean, searchContent: boolean, requestId: number) => desktop ? invoke<FileEntry[]>('search_files', { path, query, hidden, searchContent, requestId }) : Promise.resolve<FileEntry[] | null>(null),
   info: () => call<AppInfo>('get_app_info'),
   startupDirectory: () => desktop ? invoke<string | null>('startup_directory') : Promise.resolve(null),
+  takeOpenDirectories: () => desktop ? invoke<string[]>('take_open_directories') : Promise.resolve([]),
+  listenOpenDirectories: (handler: () => void) => desktop ? getCurrentWebview().listen('open-directories', handler) : Promise.resolve(() => {}),
   setWindowDirectory: (path: string) => desktop ? invoke<void>('set_window_directory', { path }) : Promise.resolve(),
   read: (path: string) => call<DirectoryListing>('read_directory', { path }),
   create: (parent: string, name: string) => call<string>('create_folder', { parent, name }),
