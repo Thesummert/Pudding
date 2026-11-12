@@ -22,7 +22,7 @@
     loaded = false;
     failed = false;
     void api.videoSource(path).then((url) => {
-      if (active) source = `${url}?v=${encodeURIComponent(`${modified ?? ''}-${size}`)}`;
+      if (active) source = url.startsWith('data:') ? url : `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(`${modified ?? ''}-${size}`)}`;
     }).catch(() => { if (active) failed = true; });
     return () => { active = false; };
   });

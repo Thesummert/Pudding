@@ -13,7 +13,22 @@ export function isImage(entry: FileEntry): boolean {
 }
 
 export function isVideo(entry: FileEntry): boolean {
-  return !entry.isDir && ['mp4', 'mov', 'mkv', 'avi', 'webm'].includes(entry.extension.toLowerCase());
+  return !entry.isDir && ['mp4', 'm4v', 'mov', 'mkv', 'avi', 'webm', 'mpeg', 'mpg', 'ogv'].includes(entry.extension.toLowerCase());
+}
+
+const textExtensions = new Set(['txt', 'md', 'markdown', 'csv', 'tsv', 'log', 'json', 'jsonl', 'xml', 'yaml', 'yml', 'toml', 'ini', 'conf', 'cfg', 'html', 'htm', 'css', 'scss', 'js', 'jsx', 'ts', 'tsx', 'svelte', 'vue', 'rs', 'py', 'sh', 'bash', 'zsh', 'c', 'h', 'cpp', 'hpp', 'java', 'go', 'swift', 'sql', 'rb', 'php', 'properties']);
+const textNames = new Set(['readme', 'license', 'licence', 'makefile', 'dockerfile', '.gitignore', '.gitattributes', '.editorconfig', '.env', '.bashrc', '.zshrc']);
+
+export function isText(entry: FileEntry): boolean {
+  return !entry.isDir && (textExtensions.has(entry.extension.toLowerCase()) || textNames.has(entry.name.toLowerCase()));
+}
+
+export function isPdf(entry: FileEntry): boolean {
+  return !entry.isDir && entry.extension.toLowerCase() === 'pdf';
+}
+
+export function canPreview(entry: FileEntry): boolean {
+  return isImage(entry) || isVideo(entry) || isText(entry) || isPdf(entry);
 }
 
 export function formatSize(bytes: number): string {

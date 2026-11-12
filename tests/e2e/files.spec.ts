@@ -175,6 +175,7 @@ test('preview zooms with the wheel, pans with the left button and closes outside
 
 test('drags a selection into a folder and a sidebar place', async ({ page }) => {
   await page.getByRole('button', { name: '开始使用.md', exact: true }).dragTo(page.getByRole('button', { name: 'Documents', exact: true }));
+  await page.getByRole('menuitem', { name: '复制到此处' }).click();
   await expect(page.getByRole('status')).toContainText('已复制 1 个项目');
   await page.getByRole('button', { name: 'Documents', exact: true }).dblclick();
   await expect(page.getByRole('heading', { name: '文档.' })).toBeVisible();
@@ -182,7 +183,60 @@ test('drags a selection into a folder and a sidebar place', async ({ page }) => 
   await expect(copy).toBeVisible();
   await page.getByRole('button', { name: '列表视图', exact: true }).click();
   await copy.dragTo(page.getByRole('navigation', { name: '常用位置' }).getByRole('button', { name: '下载', exact: true }));
+  await page.getByRole('menuitem', { name: '复制到此处' }).click();
   await expect(page.getByRole('status')).toContainText('到「Downloads」');
   await page.getByRole('navigation', { name: '常用位置' }).getByRole('button', { name: '下载', exact: true }).click();
   await expect(page.getByRole('button', { name: '开始使用.md', exact: true })).toBeVisible();
+});
+
+
+test('Space previews text and renders a PDF before closing it', async ({ page }) => {
+  await page.getByRole('button', { name: '开始使用.md', exact: true }).click();
+  await page.keyboard.press('Space');
+  await expect(page.getByRole('textbox', { name: '文本内容' })).toContainText('演示内容');
+  await page.keyboard.press('Space');
+  await expect(page.locator('.file-preview-modal')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Documents', exact: true }).dblclick();
+  await page.getByRole('button', { name: '阅读清单.pdf', exact: true }).click();
+  await page.keyboard.press('Space');
+  await expect(page.locator('.pdf-controls')).toContainText('1 / 2');
+  await expect(page.locator('.pdf-page canvas')).toBeVisible();
+  await expect.poll(() => page.locator('.pdf-page canvas').evaluate((el: HTMLCanvasElement) => {
+    const ctx = el.getContext('2d');
+    if (!ctx || el.width < 10 || el.height < 10) return 0;
+    const data = ctx.getImageData(0, 0, el.width, el.height).data;
+    let dark = 0;
+    for (let i = 0; i < data.length; i += 4) if (data[i] < 80 && data[i + 1] < 80 && data[i + 2] < 80 && data[i + 3] > 0) dark++;
+    return dark;
+  })).toBeGreaterThan(20);
+  const cMapRequest = page.waitForRequest((request) => request.url().includes('.bcmap'));
+  await page.getByRole('button', { name: '下一页' }).click();
+  await expect(page.locator('.pdf-controls')).toContainText('2 / 2');
+  await cMapRequest;
+  await expect(page.locator('.pdf-controls .spin')).toHaveCount(0);
+  await expect(page.locator('.pdf-page .file-preview-message')).toHaveCount(0);
+  await expect.poll(() => page.locator('.pdf-page canvas').evaluate((el: HTMLCanvasElement) => {
+    const ctx = el.getContext('2d');
+    if (!ctx) return 0;
+    const data = ctx.getImageData(0, 0, el.width, el.height).data;
+    let dark = 0;
+    for (let i = 0; i < data.length; i += 4) if (data[i] < 80 && data[i + 1] < 80 && data[i + 2] < 80 && data[i + 3] > 0) dark++;
+    return dark;
+  })).toBeGreaterThan(20);
+  await page.keyboard.press('Space');
+  await expect(page.locator('.file-preview-modal')).toHaveCount(0);
+});
+
+
+test('Space opens a real video and closes it from the player', async ({ page }) => {
+  await page.getByRole('button', { name: 'Videos', exact: true }).dblclick();
+  const videoFile = page.getByRole('button', { name: '示例视频.mp4', exact: true });
+  await videoFile.click();
+  await page.keyboard.press('Space');
+  const player = page.locator('.video-preview');
+  await expect(player).toBeVisible();
+  await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.currentTime)).toBeGreaterThan(0);
+  await player.focus();
+  await page.keyboard.press('Space');
+  await expect(page.locator('.file-preview-modal')).toHaveCount(0);
 });

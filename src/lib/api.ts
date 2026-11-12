@@ -54,8 +54,12 @@ export const api = {
   trash: (paths: string[]) => call<void>('trash_entries', { paths }),
   delete: (paths: string[]) => call<void>('delete_entries', { paths }),
   open: (path: string) => call<void>('open_entry', { path }),
+  previewBytes: async (path: string, kind: 'text' | 'pdf'): Promise<Uint8Array> => {
+    const bytes = await call<ArrayBuffer | number[]>('read_preview_file', { path, kind });
+    return new Uint8Array(bytes);
+  },
   videoSource: async (path: string): Promise<string> => {
-    if (!desktop) throw new Error('浏览器演示无法读取本地视频。');
+    if (!desktop) return call<string>('video_source', { path });
     return convertFileSrc(await invoke<string>('prepare_video_preview', { path }));
   },
   image: async (path: string, extension: string): Promise<string> => {

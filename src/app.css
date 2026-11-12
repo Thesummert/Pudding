@@ -393,3 +393,15 @@ h1 { margin: 4px 0 3px; font-size: 22px; color: var(--heading); letter-spacing: 
 .device-row { display: flex; align-items: center; min-width: 0; position: relative; }
 .places .device-row .device-open { min-width: 0; flex: 1; }
 .places .device-row .device-eject { width: 31px; height: 31px; flex: 0 0 31px; justify-content: center; padding: 0; }
+.file-preview-modal { width: min(1100px, calc(100vw - 48px)); height: min(780px, calc(100dvh - 48px)); max-height: calc(100dvh - 48px); padding: 0; overflow: hidden; }
+.file-preview-modal[open] { display: flex; flex-direction: column; }
+.file-preview-stage { flex: 1; min-height: 0; display: flex; position: relative; overflow: hidden; background: var(--inset); }
+.file-preview-message { margin: auto; display: flex; align-items: center; gap: 10px; padding: 20px; color: var(--secondary); font-size: 12px; overflow-wrap: anywhere; }
+.text-preview { width: 100%; height: 100%; margin: 0; padding: 24px; overflow: auto; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.7 ui-monospace, monospace; user-select: text; }
+.text-preview pre { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.video-preview { width: 100%; height: 100%; object-fit: contain; background: #111; }
+.pdf-preview { width: 100%; min-height: 0; display: flex; flex-direction: column; }
+.pdf-controls { display: flex; justify-content: center; align-items: center; gap: 10px; padding: 5px; color: var(--secondary); font-size: 11px; }
+.pdf-page { flex: 1; min-height: 0; overflow: auto; display: flex; align-items: flex-start; justify-content: center; padding: 16px; }
+.pdf-page canvas { display: block; max-width: 100%; background: white; box-shadow: 0 2px 12px #0002; }
+.pdf-page canvas.pending { display: none; }

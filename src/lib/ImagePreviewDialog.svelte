@@ -35,6 +35,7 @@
 
   function keydown(event: KeyboardEvent) {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.code === 'Space') { event.preventDefault(); event.stopPropagation(); if (!event.repeat) close(); return; }
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault();
       event.stopPropagation();

@@ -365,7 +365,10 @@ pub fn video_preview_path(path: &str) -> Result<String> {
         .and_then(|value| value.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    if !matches!(extension.as_str(), "mp4" | "mov" | "mkv" | "avi" | "webm") {
+    if !matches!(
+        extension.as_str(),
+        "mp4" | "m4v" | "mov" | "mkv" | "avi" | "webm" | "mpeg" | "mpg" | "ogv"
+    ) {
         return Err("此文件格式不支持视频封面".into());
     }
     let metadata = fs::metadata(&path).map_err(|e| io_error("无法读取视频", &path, e))?;
@@ -374,6 +377,43 @@ pub fn video_preview_path(path: &str) -> Result<String> {
     }
     let resolved = fs::canonicalize(&path).map_err(|e| io_error("无法访问视频", &path, e))?;
     Ok(display(&resolved))
+}
+
+pub fn read_preview_file(path: &str, kind: &str) -> Result<Vec<u8>> {
+    let path = checked_source(path)?;
+    let limit = match kind {
+        "text" => 2 * 1024 * 1024,
+        "pdf" => {
+            if !path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
+            {
+                return Err("此文件不是 PDF".into());
+            }
+            64 * 1024 * 1024
+        }
+        _ => return Err("不支持的预览类型".into()),
+    };
+    let metadata = fs::metadata(&path).map_err(|e| io_error("无法读取文件", &path, e))?;
+    if !metadata.is_file() {
+        return Err("只能预览普通文件".into());
+    }
+    if metadata.len() > limit {
+        return Err(format!(
+            "文件超过预览大小限制（{} MB），请使用默认应用打开",
+            limit / 1024 / 1024
+        ));
+    }
+    let file = fs::File::open(&path).map_err(|e| io_error("无法读取文件", &path, e))?;
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| io_error("无法读取文件", &path, e))?;
+    if bytes.len() as u64 > limit {
+        return Err("文件超过预览大小限制，请使用默认应用打开".into());
+    }
+    Ok(bytes)
 }
 
 const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
@@ -463,6 +503,31 @@ mod tests {
         fs::create_dir(&folder).unwrap();
         assert!(video_preview_path(&display(&folder)).is_err());
         assert!(video_preview_path("relative.mp4").is_err());
+    }
+
+    #[test]
+    fn preview_reads_regular_files_with_size_and_type_limits() {
+        let dir = tempdir().unwrap();
+        let text = dir.path().join("文本.txt");
+        fs::write(&text, "你好").unwrap();
+        assert_eq!(
+            read_preview_file(&display(&text), "text").unwrap(),
+            "你好".as_bytes()
+        );
+        assert!(read_preview_file(&display(&text), "pdf").is_err());
+        assert!(read_preview_file(&display(dir.path()), "text").is_err());
+        assert!(read_preview_file("relative", "text").is_err());
+        let pdf = dir.path().join("sample.PDF");
+        fs::write(&pdf, b"%PDF").unwrap();
+        assert_eq!(read_preview_file(&display(&pdf), "pdf").unwrap(), b"%PDF");
+        fs::File::create(&text)
+            .unwrap()
+            .set_len(2 * 1024 * 1024 + 1)
+            .unwrap();
+        assert!(read_preview_file(&display(&text), "text")
+            .unwrap_err()
+            .contains("限制"));
+        assert!(read_preview_file(&display(&pdf), "unknown").is_err());
     }
 
     #[test]

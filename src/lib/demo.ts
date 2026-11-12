@@ -2,10 +2,12 @@ import type { AppInfo, DirectoryListing, FileEntry } from './types';
 import { basename, isImage, validateName } from './files';
 import coast from './demo-images/coast.svg?raw';
 import mountains from './demo-images/mountains.svg?raw';
+import sampleVideo from './demo-videos/sample.mp4?url';
 
 const home = '/home/pudding';
 const now = Math.floor(Date.now() / 1000);
 const folders: Record<string, FileEntry[]> = {};
+const videoContents: Record<string, string> = { [`${home}/Videos/示例视频.mp4`]: sampleVideo };
 const imageContents: Record<string, string> = { [`${home}/Pictures/海岸.svg`]: coast, [`${home}/Pictures/山间.svg`]: mountains };
 
 function entry(parent: string, name: string, isDir: boolean, size = 0, hours = 0): FileEntry {
@@ -32,6 +34,7 @@ folders[`${home}/Downloads`] = [entry(`${home}/Downloads`, '设计素材.zip', f
 folders[`${home}/Pictures`] = [entry(`${home}/Pictures`, '旅行', true), entry(`${home}/Pictures`, '壁纸', true), entry(`${home}/Pictures`, '海岸.svg', false, coast.length), entry(`${home}/Pictures`, '山间.svg', false, mountains.length)];
 folders[`${home}/Pictures/旅行`] = [];
 folders[`${home}/Pictures/壁纸`] = [];
+folders[`${home}/Videos`] = [entry(`${home}/Videos`, '示例视频.mp4', false, 2048)];
 folders[`${home}/Projects`] = [entry(`${home}/Projects`, 'pudding', true), entry(`${home}/Projects`, 'README.md', false, 3120, 2)];
 folders[`${home}/Projects/pudding`] = [entry(`${home}/Projects/pudding`, 'package.json', false, 1024, 4)];
 
@@ -50,6 +53,7 @@ function find(path: string): FileEntry {
 
 function cloneTree(source: string, target: string) {
   if (imageContents[source]) imageContents[target] = imageContents[source];
+  if (videoContents[source]) videoContents[target] = videoContents[source];
   if (!folders[source]) return;
   folders[target] = folders[source].map((e) => ({ ...e, path: `${target}/${e.name}` }));
   for (const child of folders[source]) cloneTree(child.path, `${target}/${child.name}`);
@@ -57,6 +61,7 @@ function cloneTree(source: string, target: string) {
 
 function remove(path: string) {
   for (const image of Object.keys(imageContents)) if (image === path || image.startsWith(`${path}/`)) delete imageContents[image];
+  for (const video of Object.keys(videoContents)) if (video === path || video.startsWith(`${path}/`)) delete videoContents[video];
   for (const parent of Object.keys(folders)) {
     if (parent === path || parent.startsWith(`${path}/`)) delete folders[parent];
     else {
@@ -65,6 +70,34 @@ function remove(path: string) {
       if (index >= 0) entries.splice(index, 1);
     }
   }
+}
+
+function demoPdf(): ArrayBuffer {
+  const content = 'BT /F1 22 Tf 72 720 Td (Pudding PDF Preview) Tj ET';
+  const second = 'BT /F2 22 Tf 72 720 Td <4F60597D> Tj ET';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F2 8 0 R >> >> /Contents 7 0 R >>',
+    `<< /Length ${second.length} >>\nstream\n${second}\nendstream`,
+    '<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [9 0 R] >>',
+    '<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >> /FontDescriptor 10 0 R >>',
+    '<< /Type /FontDescriptor /FontName /STSong-Light /Flags 6 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 >>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = objects.map((object, index) => {
+    const offset = pdf.length;
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    return offset;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf).buffer;
 }
 
 export async function demoInvoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
@@ -112,6 +145,16 @@ export async function demoInvoke<T>(command: string, args: Record<string, unknow
   } else if (command === 'trash_entries' || command === 'delete_entries') {
     for (const path of args.paths as string[]) remove(path);
     result = undefined;
+  } else if (command === 'video_source') {
+    const item = find(String(args.path));
+    const source = videoContents[item.path];
+    if (!source) throw new Error('演示中没有此视频的内容。');
+    result = source;
+  } else if (command === 'read_preview_file') {
+    const item = find(String(args.path));
+    if (args.kind === 'pdf' && item.extension.toLowerCase() === 'pdf') result = demoPdf();
+    else if (args.kind === 'text') result = new TextEncoder().encode(`这是「${item.name}」的演示内容。\n`).buffer;
+    else throw new Error('演示中没有此文件的预览内容。');
   } else if (command === 'read_image') {
     const item = find(String(args.path));
     if (!isImage(item)) throw new Error('此文件格式不支持图片预览。');

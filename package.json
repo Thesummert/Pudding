@@ -14,8 +14,9 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@lucide/svelte": "^1.72.0",
     "@tauri-apps/api": "^2.0.0",
-    "@lucide/svelte": "^1.72.0"
+    "pdfjs-dist": "^4.10.38"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0",

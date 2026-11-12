@@ -320,6 +320,76 @@ describe('file manager interactions', () => {
     expect(open).not.toHaveBeenCalled();
   });
 
+  it('opens and closes text and PDF previews with Space', async () => {
+    const space = (target: Element) => target.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }));
+    await click(button('开始使用.md'));
+    space(button('开始使用.md'));
+    await vi.waitFor(() => expect(host.querySelector('.text-preview')?.textContent).toContain('开始使用.md'));
+    space(host.querySelector('.text-preview')!);
+    await tick();
+    expect(host.querySelector('.file-preview-modal')).toBeNull();
+    await doubleClick('Documents');
+    await vi.waitFor(() => expect(button('阅读清单.pdf')).toBeTruthy());
+    vi.spyOn(api, 'previewBytes').mockReturnValue(new Promise(() => {}));
+    await click(button('阅读清单.pdf'));
+    space(button('阅读清单.pdf'));
+    await vi.waitFor(() => expect(host.querySelector('.pdf-preview')).not.toBeNull());
+    space(host.querySelector('.file-preview-modal')!);
+    await tick();
+    expect(host.querySelector('.file-preview-modal')).toBeNull();
+  });
+
+  it('decodes UTF-16 text and reports binary content', async () => {
+    const bytes = vi.spyOn(api, 'previewBytes').mockResolvedValueOnce(new Uint8Array([0xff, 0xfe, 0x41, 0x00, 0x42, 0x00])).mockResolvedValueOnce(new Uint8Array([0x41, 0x00, 0x42]));
+    await click(button('开始使用.md'));
+    const space = (target: Element) => target.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }));
+    space(button('开始使用.md'));
+    await vi.waitFor(() => expect(host.querySelector('.text-preview')?.textContent).toBe('AB'));
+    space(host.querySelector('.text-preview')!);
+    await tick();
+    space(button('开始使用.md'));
+    await vi.waitFor(() => expect(host.querySelector('.file-preview-message')?.textContent).toContain('二进制'));
+    expect(bytes).toHaveBeenCalledTimes(2);
+  });
+
+  it('previews video and closes with Space from the player', async () => {
+    const originalRead = api.read;
+    vi.spyOn(api, 'read').mockImplementation(async (path) => {
+      const listing = await originalRead(path);
+      if (listing.path.endsWith('/Videos')) listing.entries.push({ name: '短片.mp4', path: `${listing.path}/短片.mp4`, extension: 'mp4', isDir: false, isSymlink: false, hidden: false, modified: 1, size: 123 });
+      return listing;
+    });
+    vi.spyOn(api, 'videoSource').mockResolvedValue('blob:video-test');
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockRejectedValueOnce(new DOMException('autoplay blocked', 'NotAllowedError')).mockResolvedValueOnce();
+    await doubleClick('Videos');
+    await vi.waitFor(() => expect(button('短片.mp4')).toBeTruthy());
+    await click(button('短片.mp4'));
+    button('短片.mp4').dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(host.querySelector('.video-preview')).not.toBeNull());
+    const player = host.querySelector<HTMLVideoElement>('.video-preview')!;
+    expect(player.autoplay).toBe(true);
+    player.dispatchEvent(new Event('loadedmetadata'));
+    await vi.waitFor(() => expect(play).toHaveBeenCalledTimes(2));
+    expect(player.muted).toBe(true);
+    const event = new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true });
+    host.querySelector('.video-preview')!.dispatchEvent(event);
+    await tick();
+    expect(event.defaultPrevented).toBe(true);
+    expect(host.querySelector('.file-preview-modal')).toBeNull();
+  });
+
+  it('closes image preview with Space', async () => {
+    await doubleClick('Pictures');
+    await vi.waitFor(() => expect(button('海岸.svg')).toBeTruthy());
+    await click(button('海岸.svg'));
+    button('海岸.svg').dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }));
+    await tick();
+    expect(host.querySelector('.image-modal[open]')).not.toBeNull();
+    host.querySelector('.image-modal')!.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }));
+    await tick();
+    expect(host.querySelector('.image-modal')).toBeNull();
+  });
+
   it('shows image load and decoding failures and clears preview after changing selection', async () => {
     vi.spyOn(api, 'image').mockRejectedValueOnce(new Error('图片超过 32 MB，请使用默认应用打开'));
     await doubleClick('Pictures');

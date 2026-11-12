@@ -6,8 +6,9 @@
   import NameDialog from './lib/NameDialog.svelte';
   import ImagePreview from './lib/ImagePreview.svelte';
   import ImagePreviewDialog from './lib/ImagePreviewDialog.svelte';
+  import FilePreviewDialog from './lib/FilePreviewDialog.svelte';
   import { api, desktop } from './lib/api';
-  import { basename, breadcrumbs, fileKind, formatDate, formatSize, isImage, isVideo, visibleEntries } from './lib/files';
+  import { basename, breadcrumbs, fileKind, formatDate, formatSize, isImage, isVideo, canPreview, visibleEntries } from './lib/files';
   import type { AppInfo, Clipboard, DirectoryListing, FileEntry, SortKey, ViewMode } from './lib/types';
   import type { DragDropEvent } from '@tauri-apps/api/webview';
   import { dragClientPosition } from './lib/drag';
@@ -351,7 +352,7 @@
   }
 
   function previewImage(entry: FileEntry) {
-    if (busy || !isImage(entry)) return;
+    if (busy || !canPreview(entry)) return;
     context = null;
     optionsOpen = false;
     preview = entry;
@@ -639,6 +640,11 @@
       if (editingAddress) editingAddress = false;
       return;
     }
+    if (preview && event.code === 'Space' && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault();
+      if (!event.repeat) preview = null;
+      return;
+    }
     if (document.querySelector('dialog[open]')) return;
     const target = event.target as HTMLElement;
     const modifier = event.ctrlKey || event.metaKey;
@@ -662,7 +668,7 @@
     else if (modifier && key === 'v') { event.preventDefault(); void paste(); }
     else if (key === 'f2') { event.preventDefault(); openDialog('rename'); }
     else if (key === 'delete') { event.preventDefault(); confirmTrash(event.shiftKey); }
-    else if (event.code === 'Space' && focused && isImage(focused) && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); previewImage(focused); }
+    else if (event.code === 'Space' && !event.repeat && focused && canPreview(focused) && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); previewImage(focused); }
     else if (key === 'enter' && focused && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); void openEntry(focused); }
     else if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key) && entries.length && (target.closest('.file-area') || target === document.body)) {
       event.preventDefault();
@@ -841,6 +847,7 @@
 
   {#if context}<div class="context-menu" role="menu" style={`left: ${context.x}px; top: ${context.y}px`}>
     {#if focused && isImage(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览图片</span><kbd>Space</kbd></button><button role="menuitem" onclick={() => { context = null; void openExternal(focused!); }}><ExternalLink size={16} /><span>使用默认应用打开</span></button>{/if}
+    {#if focused && !isImage(focused) && canPreview(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览</span><kbd>Space</kbd></button>{/if}
     {#if focused && !isImage(focused)}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>打开</span><kbd>Enter</kbd></button>{/if}
     {#if focused?.isDir}<button role="menuitem" onclick={() => { const path = focused!.path; context = null; newTab(path); }}><FolderPlus size={16} /><span>在新标签页中打开</span></button><button role="menuitem" onclick={() => void openInWindow(focused!.path)}><ExternalLink size={16} /><span>在新窗口中打开</span></button>{/if}
     {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{shortcutModifier} C</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{shortcutModifier} X</kbd></button>{/if}
@@ -853,9 +860,9 @@
   </div>{/if}
 
   {#if dialog}<NameDialog mode={dialog.mode} initial={dialog.mode === 'rename' ? dialog.entry?.name : ''} busy={operating} error={dialogError} onsubmit={submitName} onclose={() => { if (!operating) dialog = null; }} />{/if}
-  {#if preview}<ImagePreviewDialog entries={entries.filter(isImage)} initial={preview} onclose={() => preview = null} onopen={openExternal} />{/if}
+  {#if preview}{#if isImage(preview)}<ImagePreviewDialog entries={entries.filter(isImage)} initial={preview} onclose={() => preview = null} onopen={openExternal} />{:else}<FilePreviewDialog entry={preview} onclose={() => preview = null} onopen={openExternal} />{/if}{/if}
 
   <dialog class="modal trash-modal" bind:this={trashDialog} oncancel={(event) => { if (operating) event.preventDefault(); }}><div class="modal-top"><span class="modal-icon danger"><Trash2 size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => trashDialog.close()} disabled={operating}><X size={18} /></button></div><h2>{permanentDelete ? '永久删除？' : '移入回收站？'}</h2><p>{permanentDelete ? `将永久删除选中的 ${selected.size} 个项目，此操作无法撤销。` : `将选中的 ${selected.size} 个项目移入系统回收站。你可以稍后从系统回收站中恢复。`}</p><div class="modal-actions"><button class="button" onclick={() => trashDialog.close()} disabled={operating}>取消</button><button class="button danger-button" onclick={moveToTrash} disabled={busy}>{#if operating}<LoaderCircle size={16} class="spin" />{/if}{permanentDelete ? '永久删除' : '移入回收站'}</button></div></dialog>
 
-  <dialog class="modal help-modal" bind:this={helpDialog}><div class="modal-top"><span class="modal-icon"><Keyboard size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => helpDialog.close()}><X size={18} /></button></div><h2>键盘快捷键</h2><p>Pudding 0.1 · Tauri + Svelte</p><dl class="shortcut-list">{#each [[`${shortcutModifier} T / W`, '新建 / 关闭标签页'], [`${shortcutModifier} L`, '输入文件夹路径'], [`${shortcutModifier} F`, '搜索文件名或内容'], ['Alt ↑ / ← / →', '上一级 / 后退 / 前进'], ['鼠标侧键', '后退 / 前进'], [`${shortcutModifier} Shift N`, '新建文件夹'], [`${shortcutModifier} A`, '选择所有项目'], [`${shortcutModifier} C / X / V`, '复制 / 剪切 / 粘贴'], ['F2', '重命名'], ['Delete / Shift Delete', '移入回收站 / 永久删除'], ['F5', '刷新'], [`${shortcutModifier} Shift .`, '显示或隐藏隐藏文件']] as [keys, label]}<div><dt>{label}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{#if !desktop}<p class="help-demo">当前为浏览器演示。使用 <code>npm run tauri dev</code> 启动桌面版，管理真实文件。</p>{/if}</dialog>
+  <dialog class="modal help-modal" bind:this={helpDialog}><div class="modal-top"><span class="modal-icon"><Keyboard size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => helpDialog.close()}><X size={18} /></button></div><h2>键盘快捷键</h2><p>Pudding 0.1 · Tauri + Svelte</p><dl class="shortcut-list">{#each [[`${shortcutModifier} T / W`, '新建 / 关闭标签页'], [`${shortcutModifier} L`, '输入文件夹路径'], [`${shortcutModifier} F`, '搜索文件名或内容'], ['Alt ↑ / ← / →', '上一级 / 后退 / 前进'], ['鼠标侧键', '后退 / 前进'], [`${shortcutModifier} Shift N`, '新建文件夹'], [`${shortcutModifier} A`, '选择所有项目'], [`${shortcutModifier} C / X / V`, '复制 / 剪切 / 粘贴'], ['Space', '预览 / 关闭预览'], ['F2', '重命名'], ['Delete / Shift Delete', '移入回收站 / 永久删除'], ['F5', '刷新'], [`${shortcutModifier} Shift .`, '显示或隐藏隐藏文件']] as [keys, label]}<div><dt>{label}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{#if !desktop}<p class="help-demo">当前为浏览器演示。使用 <code>npm run tauri dev</code> 启动桌面版，管理真实文件。</p>{/if}</dialog>
 </div>
