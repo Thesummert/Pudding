@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "A thoughtful cross-platform file manager"
 authors = ["Pudding contributors"]
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.91"
 
 [lib]
 name = "pudding_lib"
@@ -28,6 +28,8 @@ url = "2"
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+smb2 = "0.37"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard", "NSPasteboardItem", "NSEvent", "NSWorkspace"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSString", "NSURL", "NSFileManager", "NSError", "NSValue"] }

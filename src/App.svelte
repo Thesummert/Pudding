@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert, Eject, Settings } from '@lucide/svelte';
+  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert, Eject, Settings, Network } from '@lucide/svelte';
   import FileIcon from './lib/FileIcon.svelte';
   import FileThumbnail from './lib/FileThumbnail.svelte';
   import NameDialog from './lib/NameDialog.svelte';
@@ -74,6 +74,20 @@
   let permanentDelete = $state(false);
   let helpDialog: HTMLDialogElement;
   let settingsDialog: HTMLDialogElement;
+  let smbDialog: HTMLDialogElement;
+  let smbAddress = $state('');
+  let smbUsername = $state('');
+  let smbPassword = $state('');
+  let smbError = $state('');
+  let smbConnecting = $state(false);
+  let smbShares = $state<string[] | null>(null);
+  function loadSmbHistory(): string[] {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem('pudding.smbHistory') || '[]');
+      return Array.isArray(saved) ? saved.filter((entry): entry is string => typeof entry === 'string' && /^smb:\/\/[^/@\s]+(?:\/[^?#@]*)?$/i.test(entry)).slice(0, 10) : [];
+    } catch { return []; }
+  }
+  let smbHistory = $state(loadSmbHistory());
   let context = $state<{ x: number; y: number } | null>(null);
   let optionsOpen = $state(false);
   let preview = $state<FileEntry | null>(null);
@@ -306,6 +320,31 @@
       notify(`已推出「${root.name}」`);
     } catch (error) { notify(errorMessage(error), true); }
     finally { operating = false; }
+  }
+
+  async function connectSmb(event: SubmitEvent) {
+    event.preventDefault();
+    if (smbConnecting) return;
+    smbConnecting = true;
+    smbError = '';
+    try {
+      let address = smbAddress.trim();
+      let url: URL;
+      try { url = new URL(address); } catch { throw new Error('请输入有效的 SMB 地址，例如 smb://server'); }
+      if (url.protocol !== 'smb:' || !url.hostname || url.username || url.password || url.search || url.hash) throw new Error('请输入不含账户信息的 SMB 地址');
+      if (!url.pathname || url.pathname === '/') {
+        smbShares = await api.listSmbShares(address, smbUsername.trim(), smbPassword);
+        if (!smbShares.length) smbError = '服务器没有返回可用的共享文件夹。';
+        return;
+      }
+      const paths = await api.connectSmb(address, smbUsername.trim(), smbPassword);
+      smbHistory = [address, ...smbHistory.filter((item) => item !== address)].slice(0, 10);
+      try { localStorage.setItem('pudding.smbHistory', JSON.stringify(smbHistory)); } catch { /* Optional persistence. */ }
+      smbDialog.close();
+      await refreshVolumes();
+      await navigate(paths[0]);
+    } catch (error) { smbError = errorMessage(error); }
+    finally { smbConnecting = false; }
   }
 
   function refresh() { if (directory && !busy) { void refreshVolumes(); void navigate(directory.path, undefined, true); } }
@@ -728,6 +767,7 @@
           {#each info?.roots ?? [] as root}
             <div class="device-row"><button class="device-open" data-drop-path={root.path} class:drop-target={dropRegion === 'sidebar' && dropTarget === root.path} class:active={directory?.path === root.path} onclick={() => navigate(root.path)} disabled={operating} title={root.path}><HardDrive size={18} strokeWidth={1.8} /><span>{root.name}</span></button>{#if root.ejectable}<button class="device-eject" title={`推出 ${root.name}`} aria-label={`推出 ${root.name}`} onclick={() => ejectVolume(root)} disabled={busy}><Eject size={15} /></button>{/if}</div>
           {/each}
+          <button onclick={() => { smbError = ''; smbShares = null; smbDialog.showModal(); }} disabled={!desktop || info?.platform !== 'macos'} title={!desktop ? '请在桌面版中连接 SMB' : info?.platform !== 'macos' ? '当前仅支持 macOS' : '连接 SMB 共享'}><Network size={18} strokeWidth={1.8} /><span>连接 SMB 共享</span></button>
         </nav>
         <div class="sidebar-note"><span class="note-icon"><Folder size={19} strokeWidth={1.5} /></span><p>给每一份灵感<br />一个妥帖的位置。</p><span class="note-line"></span></div>
       </div>
@@ -866,6 +906,20 @@
 
   <dialog class="modal trash-modal" bind:this={trashDialog} oncancel={(event) => { if (operating) event.preventDefault(); }}><div class="modal-top"><span class="modal-icon danger"><Trash2 size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => trashDialog.close()} disabled={operating}><X size={18} /></button></div><h2>{permanentDelete ? '永久删除？' : '移入回收站？'}</h2><p>{permanentDelete ? `将永久删除选中的 ${selected.size} 个项目，此操作无法撤销。` : `将选中的 ${selected.size} 个项目移入系统回收站。你可以稍后从系统回收站中恢复。`}</p><div class="modal-actions"><button class="button" onclick={() => trashDialog.close()} disabled={operating}>取消</button><button class="button danger-button" onclick={moveToTrash} disabled={busy}>{#if operating}<LoaderCircle size={16} class="spin" />{/if}{permanentDelete ? '永久删除' : '移入回收站'}</button></div></dialog>
 
+  <dialog class="modal smb-modal" bind:this={smbDialog} aria-labelledby="smb-title" onclose={() => { smbPassword = ''; smbShares = null; }} oncancel={(event) => { if (smbConnecting) event.preventDefault(); }}>
+    <form onsubmit={connectSmb}>
+      <div class="modal-top"><span class="modal-icon"><Network size={24} /></span><button type="button" class="icon-button" title="关闭连接窗口" aria-label="关闭连接窗口" disabled={smbConnecting} onclick={() => smbDialog.close()}><X size={18} /></button></div>
+      <h2 id="smb-title">连接 SMB 共享</h2>
+      <p>输入服务器地址及账户信息，查看并选择共享文件夹；用户名和密码均留空时以访客身份连接。</p>
+      <label class="smb-address">服务器地址<input type="text" bind:value={smbAddress} oninput={() => smbShares = null} placeholder="smb://server 或 smb://server/share" autocomplete="off" spellcheck="false" required disabled={smbConnecting} /></label>
+      <label class="smb-address">用户名<input type="text" bind:value={smbUsername} oninput={() => smbShares = null} autocomplete="username" disabled={smbConnecting} /></label>
+      <label class="smb-address">密码<input type="password" bind:value={smbPassword} oninput={() => smbShares = null} autocomplete="off" disabled={smbConnecting} /></label>
+      {#if smbShares?.length}<div class="smb-history"><strong>选择共享文件夹</strong>{#each smbShares as share}<div><button type="button" class="smb-history-address" disabled={smbConnecting} onclick={() => { const url = new URL(smbAddress.trim()); url.pathname = `/${encodeURIComponent(share)}`; smbAddress = url.toString(); smbShares = null; smbError = ''; }}><Folder size={15} /> {share}</button></div>{/each}</div>{/if}
+      {#if smbHistory.length}<div class="smb-history"><strong>最近连接</strong>{#each smbHistory as address}<div><button type="button" class="smb-history-address" onclick={() => { smbAddress = address; smbShares = null; smbError = ''; }} disabled={smbConnecting}>{address}</button><button type="button" class="icon-button compact" aria-label={`删除历史 ${address}`} title="删除记录" disabled={smbConnecting} onclick={() => { smbHistory = smbHistory.filter((item) => item !== address); try { localStorage.setItem('pudding.smbHistory', JSON.stringify(smbHistory)); } catch { /* Optional persistence. */ } }}><X size={14} /></button></div>{/each}</div>{/if}
+      {#if smbError}<div class="smb-error" role="alert">{smbError}</div>{/if}
+      <div class="modal-actions"><button type="button" class="button" onclick={() => smbDialog.close()} disabled={smbConnecting}>取消</button><button class="button primary" type="submit" disabled={smbConnecting}>{#if smbConnecting}<LoaderCircle size={16} class="spin" />{/if}连接</button></div>
+    </form>
+  </dialog>
   <dialog class="modal settings-modal" bind:this={settingsDialog} aria-labelledby="settings-title">
     <div class="modal-top"><span class="modal-icon"><Settings size={24} /></span><button class="icon-button" title="关闭设置" aria-label="关闭设置" onclick={() => settingsDialog.close()}><X size={18} /></button></div>
     <h2 id="settings-title">设置</h2><p>调整文件浏览的外观与显示方式，修改会自动保存。</p>

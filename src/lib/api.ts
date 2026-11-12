@@ -43,6 +43,8 @@ export const api = {
   info: () => call<AppInfo>('get_app_info'),
   volumes: () => call<Volume[]>('list_volumes'),
   ejectVolume: (path: string) => call<void>('eject_volume', { path }),
+  connectSmb: (address: string, username: string, password: string) => desktop ? invoke<string[]>('connect_smb', { address, username, password }) : Promise.reject(new Error('浏览器演示无法连接 SMB 共享。')),
+  listSmbShares: (address: string, username: string, password: string) => desktop ? invoke<string[]>('list_smb_shares', { address, username, password }) : Promise.reject(new Error('浏览器演示无法连接 SMB 共享。')),
   startupDirectory: () => desktop ? invoke<string | null>('startup_directory') : Promise.resolve(null),
   takeOpenDirectories: () => desktop ? invoke<string[]>('take_open_directories') : Promise.resolve([]),
   listenOpenDirectories: (handler: () => void) => desktop ? getCurrentWebview().listen('open-directories', handler) : Promise.resolve(() => {}),

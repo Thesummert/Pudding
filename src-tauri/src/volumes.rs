@@ -38,14 +38,14 @@ pub fn list() -> Result<Vec<Volume>, String> {
 fn list_macos() -> Result<Vec<Volume>, String> {
     use objc2_foundation::{
         NSFileManager, NSNumber, NSURLResourceKey, NSURLVolumeIsEjectableKey,
-        NSURLVolumeIsRemovableKey, NSVolumeEnumerationOptions, NSURL,
+        NSURLVolumeIsLocalKey, NSURLVolumeIsRemovableKey, NSVolumeEnumerationOptions, NSURL,
     };
-    fn flag(url: &NSURL, key: &NSURLResourceKey) -> bool {
+    fn flag(url: &NSURL, key: &NSURLResourceKey) -> Option<bool> {
         let mut value = None;
-        unsafe { url.getResourceValue_forKey_error(&mut value, key) }.is_ok()
-            && value
-                .and_then(|v| v.downcast::<NSNumber>().ok())
-                .is_some_and(|v| v.boolValue())
+        unsafe { url.getResourceValue_forKey_error(&mut value, key) }.ok()?;
+        value
+            .and_then(|v| v.downcast::<NSNumber>().ok())
+            .map(|v| v.boolValue())
     }
     let manager = NSFileManager::defaultManager();
     let urls = manager
@@ -67,7 +67,9 @@ fn list_macos() -> Result<Vec<Volume>, String> {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.clone());
         let ejectable = unsafe {
-            flag(&url, NSURLVolumeIsEjectableKey) || flag(&url, NSURLVolumeIsRemovableKey)
+            flag(&url, NSURLVolumeIsEjectableKey) == Some(true)
+                || flag(&url, NSURLVolumeIsRemovableKey) == Some(true)
+                || flag(&url, NSURLVolumeIsLocalKey) == Some(false)
         };
         volumes.push(volume(&path, &name, ejectable));
     }

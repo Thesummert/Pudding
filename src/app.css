@@ -325,6 +325,13 @@ h1 { margin: 4px 0 3px; font-size: 22px; color: var(--heading); letter-spacing: 
 .danger-button { background: #d85665; border-color: #d85665; color: #fff; }
 .danger-button:not(:disabled):hover { background: #c24756; border-color: #c24756; }
 .help-modal { width: 455px; }
+.smb-modal { max-height: calc(100dvh - 40px); overflow-y: auto; }
+.smb-address { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; color: var(--heading); font-size: 12px; font-weight: 600; }
+.smb-address input { width: 100%; padding: 10px 11px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--inset); font-weight: 400; }
+.smb-error { margin-top: 10px; color: var(--danger); font-size: 11px; overflow-wrap: anywhere; }
+.smb-history { border-top: 1px solid var(--line); padding-top: 12px; color: var(--secondary); font-size: 11px; }
+.smb-history > div { display: flex; align-items: center; gap: 6px; }
+.smb-history-address { flex: 1; min-width: 0; padding: 8px 0; color: var(--accent); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-modal { width: 480px; max-height: calc(100dvh - 40px); overflow-y: auto; }
 .settings-list { border-top: 1px solid var(--line); }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--line); }

@@ -4,6 +4,7 @@ mod open_requests;
 mod rename;
 mod search;
 mod session;
+mod smb;
 mod volumes;
 
 use tauri::{Emitter, Manager};
@@ -143,6 +144,24 @@ async fn list_volumes() -> Result<Vec<volumes::Volume>, String> {
 #[tauri::command]
 async fn eject_volume(path: String) -> Result<(), String> {
     blocking(move || volumes::eject(&path)).await
+}
+
+#[tauri::command]
+async fn connect_smb(
+    address: String,
+    username: String,
+    password: String,
+) -> Result<Vec<String>, String> {
+    blocking(move || smb::connect(&address, &username, &password)).await
+}
+
+#[tauri::command]
+async fn list_smb_shares(
+    address: String,
+    username: String,
+    password: String,
+) -> Result<Vec<String>, String> {
+    smb::list_shares(&address, &username, &password).await
 }
 
 #[tauri::command]
@@ -325,6 +344,8 @@ pub fn run() {
             get_app_info,
             list_volumes,
             eject_volume,
+            connect_smb,
+            list_smb_shares,
             startup_directory,
             take_open_directories,
             set_window_directory,
