@@ -28,6 +28,12 @@
   let operating = $state(false);
   let initialError = $state('');
   let query = $state('');
+  let searchContent = $state(false);
+  let searchResults = $state<FileEntry[] | null>(null);
+  let searchVersion = $state(0);
+  let searching = $state(false);
+  let scanned = $state(0);
+  let searchRequest = 0;
   let sort = $state<SortKey>('name');
   let descending = $state(false);
   let selected = $state(new Set<string>());
@@ -60,7 +66,7 @@
   const folderLabels: Record<string, string> = { Desktop: '桌面', Documents: '文档', Downloads: '下载', Music: '音乐', Pictures: '图片', Videos: '视频', Projects: '项目', Archive: '归档' };
   const shortcutModifier = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
 
-  let entries = $derived(visibleEntries(directory?.entries ?? [], query, preferences.hidden, sort, descending));
+  let entries = $derived(visibleEntries(query.trim() && searchResults !== null ? searchResults : directory?.entries ?? [], query.trim() && searchResults !== null ? '' : query, preferences.hidden, sort, descending));
   let selectedEntries = $derived(entries.filter((entry) => selected.has(entry.path)));
   let focused = $derived(selectedEntries.length === 1 ? selectedEntries[0] : undefined);
   let currentPlace = $derived(info?.places.find((place) => place.path === directory?.path));
@@ -78,8 +84,28 @@
 
   // Filtering must also update selection, so hidden files cannot be operated on accidentally.
   $effect(() => {
+    if (searching) return;
     const visiblePaths = new Set(entries.map((e) => e.path));
     if ([...selected].some((path) => !visiblePaths.has(path))) selected = new Set([...selected].filter((path) => visiblePaths.has(path)));
+  });
+
+  $effect(() => {
+    const path = directory?.path;
+    const term = query.trim();
+    const hidden = preferences.hidden;
+    const content = searchContent;
+    searchVersion;
+    let cancelled = false;
+    const searchId = ++searchRequest;
+    scanned = 0;
+    searchResults = null;
+    searching = !!(path && term && desktop);
+    if (path && term) {
+      const timer = setTimeout(() => {
+        void api.search(path, term, hidden, content, searchId).then((results) => { if (!cancelled) { searchResults = results; searching = false; } }).catch((error) => { if (!cancelled) { searching = false; notify(errorMessage(error), true); } });
+      }, 250);
+      return () => { cancelled = true; clearTimeout(timer); };
+    }
   });
 
   onMount(() => {
@@ -87,10 +113,22 @@
     void syncClipboard();
     let disposed = false;
     let unlisten: (() => void) | undefined;
+    let unlistenChanges: (() => void) | undefined;
+    let unlistenProgress: (() => void) | undefined;
+    void api.listenSearchProgress(([id, count]) => { if (id === searchRequest) scanned = count; }).then((cleanup) => { if (disposed) cleanup(); else unlistenProgress = cleanup; }).catch((error) => notify(errorMessage(error), true));
+    let changeTimer: ReturnType<typeof setTimeout>;
+    function applyChanges() {
+      if (busy) { changeTimer = setTimeout(applyChanges, 300); return; }
+      searchVersion++; refresh();
+    }
+    void api.listenChanges(() => {
+      clearTimeout(changeTimer);
+      changeTimer = setTimeout(applyChanges, 300);
+    }).then((cleanup) => { if (disposed) cleanup(); else unlistenChanges = cleanup; }).catch((error) => notify(errorMessage(error), true));
     void api.listenDrop(nativeDrop).then((cleanup) => {
       if (disposed) cleanup(); else unlisten = cleanup;
     }).catch((error) => notify(errorMessage(error), true));
-    return () => { disposed = true; unlisten?.(); clipboardRequest += 1; request += 1; clearTimeout(noticeTimeout); };
+    return () => { disposed = true; unlisten?.(); unlistenChanges?.(); unlistenProgress?.(); clearTimeout(changeTimer); clipboardRequest += 1; request += 1; clearTimeout(noticeTimeout); };
   });
 
   function notify(text: string, error = false) {
@@ -124,13 +162,14 @@
       const result = await api.read(path);
       if (id !== request) return;
       directory = result;
+      if (!refresh) void api.watch(result.path).catch((error) => notify(errorMessage(error), true));
       editingAddress = false;
       initialError = '';
       if (!refresh) {
         query = '';
         selected = new Set();
         anchor = undefined;
-      } else selected = new Set([...selected].filter((p) => result.entries.some((e) => e.path === p)));
+      } else if (!query.trim()) selected = new Set([...selected].filter((p) => result.entries.some((e) => e.path === p)));
       if (index !== undefined) historyIndex = index;
       else if (!refresh && history[historyIndex] !== result.path) {
         history = [...history.slice(0, historyIndex + 1), result.path];
@@ -500,7 +539,8 @@
           {/if}
         </div>
         <button class="icon-button refresh-button" title="刷新 (F5)" aria-label="刷新" onclick={refresh} disabled={busy || !directory}><RotateCw size={17} class={loading ? 'spin' : ''} /></button>
-        <label class="search-box"><Search size={16} /><input bind:this={searchInput} bind:value={query} placeholder="搜索当前文件夹" aria-label="搜索当前文件夹" disabled={!directory} />{#if query}<button class="clear-search" title="清除搜索" aria-label="清除搜索" onclick={() => query = ''}><X size={14} /></button>{:else}<kbd>{shortcutModifier} F</kbd>{/if}</label>
+        <label class="search-box"><Search size={16} /><input bind:this={searchInput} bind:value={query} placeholder={searchContent ? '搜索文件名或内容' : '搜索文件名'} aria-label="搜索当前文件夹" disabled={!directory} />{#if query}<button class="clear-search" title="清除搜索" aria-label="清除搜索" onclick={() => query = ''}><X size={14} /></button>{:else}<kbd>{shortcutModifier} F</kbd>{/if}</label>
+        <label class="search-content-option" title={desktop ? "同时搜索文本文件内容" : "文件内容搜索仅在桌面版可用"}><input type="checkbox" bind:checked={searchContent} disabled={!desktop || !directory} />搜索内容</label>
       </div>
 
       <div class="content-layout">
@@ -533,7 +573,7 @@
             {:else if !directory && loading}
               <div class="empty-state"><LoaderCircle class="spin" size={28} /><p>正在打开你的空间…</p></div>
             {:else if !entries.length}
-              <div class="empty-state"><span class="empty-icon">{#if query}<Search size={34} strokeWidth={1.3} />{:else}<Folder size={38} strokeWidth={1.2} />{/if}</span><h2>{query ? '没有找到匹配的项目' : '留一点空间，给新的可能'}</h2><p>{query ? '试试其他名称，搜索仅在当前文件夹中进行。' : '这个文件夹还是空的，从创建一个文件夹开始吧。'}</p>{#if query}<button class="button" onclick={() => query = ''}>清除搜索</button>{:else}<button class="button" onclick={() => openDialog('create')} disabled={busy}><FolderPlus size={16} />新建文件夹</button>{/if}</div>
+              <div class="empty-state"><span class="empty-icon">{#if query}<Search size={34} strokeWidth={1.3} />{:else}<Folder size={38} strokeWidth={1.2} />{/if}</span><h2>{query ? '没有找到匹配的项目' : '留一点空间，给新的可能'}</h2><p>{query ? (searchContent ? '试试其他文件名或文本内容。' : '试试其他文件名。') : '这个文件夹还是空的，从创建一个文件夹开始吧。'}</p>{#if query}<button class="button" onclick={() => query = ''}>清除搜索</button>{:else}<button class="button" onclick={() => openDialog('create')} disabled={busy}><FolderPlus size={16} />新建文件夹</button>{/if}</div>
             {:else if preferences.view === 'grid'}
               <div class="file-grid" style={`--cell-size: ${preferences.size}px`}>
                 {#each entries as entry, index (entry.path)}
@@ -577,7 +617,7 @@
         {/if}
       </div>
 
-      <footer class="status-bar"><span>{#if operating}<LoaderCircle size={12} class="spin" />正在处理文件…{:else if loading}<LoaderCircle size={12} class="spin" />正在读取…{:else}<span class="status-dot"></span>一切就绪{/if}{#if directory?.skipped}<span class="skipped-label">已跳过 {directory.skipped} 个无法读取的项目</span>{/if}</span><span>{#if !desktop}浏览器演示 · 示例数据仅保存在本次会话{:else}{info?.platform === 'macos' ? 'macOS' : info?.platform === 'windows' ? 'Windows' : 'Linux'} · 本地文件系统{/if}<span class="status-divider"></span><kbd>{shortcutModifier} L</kbd> 输入路径</span></footer>
+      <footer class="status-bar"><span>{#if operating}<LoaderCircle size={12} class="spin" />正在处理文件…{:else if loading}<LoaderCircle size={12} class="spin" />正在读取…{:else if searching}<LoaderCircle size={12} class="spin" />正在搜索，已扫描 {scanned} 个项目…{:else}<span class="status-dot"></span>一切就绪{/if}{#if directory?.skipped}<span class="skipped-label">已跳过 {directory.skipped} 个无法读取的项目</span>{/if}</span><span>{#if !desktop}浏览器演示 · 示例数据仅保存在本次会话{:else}{info?.platform === 'macos' ? 'macOS' : info?.platform === 'windows' ? 'Windows' : 'Linux'} · 本地文件系统{/if}<span class="status-divider"></span><kbd>{shortcutModifier} L</kbd> 输入路径</span></footer>
     </main>
   </div>
 
@@ -600,5 +640,5 @@
 
   <dialog class="modal trash-modal" bind:this={trashDialog} oncancel={(event) => { if (operating) event.preventDefault(); }}><div class="modal-top"><span class="modal-icon danger"><Trash2 size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => trashDialog.close()} disabled={operating}><X size={18} /></button></div><h2>移入回收站？</h2><p>将选中的 {selected.size} 个项目移入系统回收站。你可以稍后从系统回收站中恢复。</p><div class="modal-actions"><button class="button" onclick={() => trashDialog.close()} disabled={operating}>取消</button><button class="button danger-button" onclick={moveToTrash} disabled={busy}>{#if operating}<LoaderCircle size={16} class="spin" />{/if}移入回收站</button></div></dialog>
 
-  <dialog class="modal help-modal" bind:this={helpDialog}><div class="modal-top"><span class="modal-icon"><Keyboard size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => helpDialog.close()}><X size={18} /></button></div><h2>顺手，就从快捷键开始</h2><p>Pudding 0.1 · Tauri + Svelte</p><dl class="shortcut-list">{#each [[`${shortcutModifier} L`, '输入文件夹路径'], [`${shortcutModifier} F`, '搜索当前文件夹'], ['Alt ↑ / ← / →', '上一级 / 后退 / 前进'], [`${shortcutModifier} Shift N`, '新建文件夹'], [`${shortcutModifier} A`, '选择所有项目'], [`${shortcutModifier} C / X / V`, '复制 / 剪切 / 粘贴'], ['F2', '重命名'], ['Delete', '移入回收站'], ['F5', '刷新'], [`${shortcutModifier} Shift .`, '显示或隐藏隐藏文件']] as [keys, label]}<div><dt>{label}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{#if !desktop}<p class="help-demo">当前为浏览器演示。使用 <code>npm run tauri dev</code> 启动桌面版，管理真实文件。</p>{/if}</dialog>
+  <dialog class="modal help-modal" bind:this={helpDialog}><div class="modal-top"><span class="modal-icon"><Keyboard size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => helpDialog.close()}><X size={18} /></button></div><h2>顺手，就从快捷键开始</h2><p>Pudding 0.1 · Tauri + Svelte</p><dl class="shortcut-list">{#each [[`${shortcutModifier} L`, '输入文件夹路径'], [`${shortcutModifier} F`, '搜索文件名或内容'], ['Alt ↑ / ← / →', '上一级 / 后退 / 前进'], [`${shortcutModifier} Shift N`, '新建文件夹'], [`${shortcutModifier} A`, '选择所有项目'], [`${shortcutModifier} C / X / V`, '复制 / 剪切 / 粘贴'], ['F2', '重命名'], ['Delete', '移入回收站'], ['F5', '刷新'], [`${shortcutModifier} Shift .`, '显示或隐藏隐藏文件']] as [keys, label]}<div><dt>{label}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{#if !desktop}<p class="help-demo">当前为浏览器演示。使用 <code>npm run tauri dev</code> 启动桌面版，管理真实文件。</p>{/if}</dialog>
 </div>

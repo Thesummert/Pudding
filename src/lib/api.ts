@@ -1,5 +1,6 @@
+import { listen } from '@tauri-apps/api/event';
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import type { AppInfo, Clipboard, DirectoryListing } from './types';
+import type { AppInfo, Clipboard, DirectoryListing, FileEntry } from './types';
 import { getCurrentWebview, type DragDropEvent } from '@tauri-apps/api/webview';
 import { imageMimeType } from './files';
 
@@ -30,6 +31,10 @@ export const api = {
   listenDrop: (handler: (event: DragDropEvent) => void): Promise<() => void> => desktop
     ? getCurrentWebview().onDragDropEvent((event) => handler(event.payload))
     : Promise.resolve(() => {}),
+  watch: (path: string) => desktop ? invoke<void>('watch_directory', { path }) : Promise.resolve(),
+  listenChanges: (handler: () => void) => desktop ? listen('filesystem-changed', handler) : Promise.resolve(() => {}),
+  listenSearchProgress: (handler: (progress: [number, number]) => void) => desktop ? listen<[number, number]>('search-progress', (event) => handler(event.payload)) : Promise.resolve(() => {}),
+  search: (path: string, query: string, hidden: boolean, searchContent: boolean, requestId: number) => desktop ? invoke<FileEntry[]>('search_files', { path, query, hidden, searchContent, requestId }) : Promise.resolve<FileEntry[] | null>(null),
   info: () => call<AppInfo>('get_app_info'),
   read: (path: string) => call<DirectoryListing>('read_directory', { path }),
   create: (parent: string, name: string) => call<string>('create_folder', { parent, name }),

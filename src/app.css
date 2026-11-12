@@ -132,6 +132,8 @@ kbd { font-family: inherit; font-size: 10px; font-weight: 450; white-space: nowr
 .address-form input:focus-visible { outline: 0; }
 .address-bar:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .search-box { height: 35px; width: 226px; min-width: 150px; display: flex; align-items: center; gap: 8px; background: var(--inset); border: 1px solid var(--line); border-radius: 7px; padding: 0 10px; margin-left: 4px; color: var(--muted); }
+.search-content-option { display: flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 11px; color: var(--secondary); }
+.search-content-option input { accent-color: var(--accent); }
 .search-box:focus-within { border-color: var(--accent-line); }
 .search-box input { width: 100%; border: 0; background: transparent; outline: none; font-size: 11px; padding: 0; }
 .search-box input:focus-visible { outline: 0; }

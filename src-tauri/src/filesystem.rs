@@ -8,17 +8,17 @@ use std::{
 
 type Result<T> = std::result::Result<T, String>;
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileEntry {
-    name: String,
-    path: String,
-    is_dir: bool,
-    is_symlink: bool,
-    size: u64,
-    modified: Option<u64>,
-    hidden: bool,
-    extension: String,
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) is_dir: bool,
+    pub(crate) is_symlink: bool,
+    pub(crate) size: u64,
+    pub(crate) modified: Option<u64>,
+    pub(crate) hidden: bool,
+    pub(crate) extension: String,
 }
 
 #[derive(Serialize)]
@@ -26,7 +26,7 @@ pub struct FileEntry {
 pub struct DirectoryListing {
     path: String,
     parent: Option<String>,
-    entries: Vec<FileEntry>,
+    pub(crate) entries: Vec<FileEntry>,
     skipped: usize,
 }
 

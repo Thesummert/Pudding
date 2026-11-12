@@ -1,8 +1,9 @@
 mod clipboard;
 mod filesystem;
 mod rename;
+mod search;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
@@ -124,13 +125,45 @@ async fn open_entry(app: tauri::AppHandle, path: String) -> Result<(), String> {
         .map_err(|e| format!("无法用默认应用打开：{e}"))
 }
 
+#[tauri::command]
+async fn watch_directory(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    blocking(move || search::watch(&app.state::<search::SearchState>(), app.clone(), path)).await
+}
+
+#[tauri::command]
+async fn search_files(
+    app: tauri::AppHandle,
+    path: String,
+    query: String,
+    hidden: bool,
+    search_content: bool,
+    request_id: u32,
+) -> Result<Vec<filesystem::FileEntry>, String> {
+    blocking(move || {
+        search::search(
+            &app.state::<search::SearchState>(),
+            path,
+            query,
+            hidden,
+            search_content,
+            |count| {
+                let _ = app.emit("search-progress", (request_id, count));
+            },
+        )
+    })
+    .await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(clipboard::SystemClipboard::default())
+        .manage(search::SearchState::default())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_app_info,
+            watch_directory,
+            search_files,
             read_directory,
             read_image,
             create_folder,
