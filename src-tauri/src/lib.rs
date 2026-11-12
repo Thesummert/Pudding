@@ -5,6 +5,7 @@ mod rename;
 mod search;
 mod session;
 mod smb;
+mod terminal;
 mod volumes;
 
 use tauri::{Emitter, Manager};
@@ -254,6 +255,20 @@ async fn open_entry(app: tauri::AppHandle, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn open_terminal(
+    path: String,
+    terminal: String,
+    custom: Option<String>,
+) -> Result<(), String> {
+    blocking(move || terminal::open(&path, &terminal, custom.as_deref())).await
+}
+
+#[tauri::command]
+async fn choose_terminal() -> Result<Option<String>, String> {
+    blocking(|| Ok(terminal::choose())).await
+}
+
+#[tauri::command]
 async fn watch_directory(window: tauri::WebviewWindow, path: String) -> Result<(), String> {
     blocking(move || search::watch(&window.state::<search::SearchState>(), window.clone(), path))
         .await
@@ -362,6 +377,8 @@ pub fn run() {
             trash_entries,
             delete_entries,
             open_entry,
+            open_terminal,
+            choose_terminal,
             read_file_clipboard,
             write_file_clipboard,
             clear_file_clipboard,

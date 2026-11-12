@@ -56,6 +56,8 @@ export const api = {
   trash: (paths: string[]) => call<void>('trash_entries', { paths }),
   delete: (paths: string[]) => call<void>('delete_entries', { paths }),
   open: (path: string) => call<void>('open_entry', { path }),
+  openTerminal: (path: string, terminal: string, custom: string) => desktop ? invoke<void>('open_terminal', { path, terminal, custom }) : Promise.reject(new Error('浏览器演示无法打开终端。')),
+  chooseTerminal: () => desktop ? invoke<string | null>('choose_terminal') : Promise.reject(new Error('浏览器演示无法选择终端应用。')),
   previewBytes: async (path: string, kind: 'text' | 'pdf'): Promise<Uint8Array> => {
     const bytes = await call<ArrayBuffer | number[]>('read_preview_file', { path, kind });
     return new Uint8Array(bytes);

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert, Eject, Settings, Network } from '@lucide/svelte';
+  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert, Eject, Settings, Network, Terminal } from '@lucide/svelte';
   import FileIcon from './lib/FileIcon.svelte';
   import FileThumbnail from './lib/FileThumbnail.svelte';
   import NameDialog from './lib/NameDialog.svelte';
@@ -13,12 +13,12 @@
   import type { DragDropEvent } from '@tauri-apps/api/webview';
   import { dragClientPosition } from './lib/drag';
 
-  type Preferences = { view: ViewMode; hidden: boolean; inspector: boolean; size: number; dark: boolean };
+  type Preferences = { view: ViewMode; hidden: boolean; inspector: boolean; size: number; dark: boolean; terminal: string; customTerminal: string };
   function loadPreferences(): Preferences {
-    const defaults: Preferences = { view: 'grid', hidden: false, inspector: true, size: 120, dark: false };
+    const defaults: Preferences = { view: 'grid', hidden: false, inspector: true, size: 120, dark: false, terminal: 'system', customTerminal: '' };
     try {
       const saved = JSON.parse(localStorage.getItem('pudding.preferences') || '{}');
-      return { view: saved.view === 'list' ? 'list' : 'grid', hidden: saved.hidden === true, inspector: saved.inspector !== false, size: Number.isFinite(saved.size) && saved.size >= 104 && saved.size <= 168 ? saved.size : 120, dark: saved.dark === true };
+      return { view: saved.view === 'list' ? 'list' : 'grid', hidden: saved.hidden === true, inspector: saved.inspector !== false, size: Number.isFinite(saved.size) && saved.size >= 104 && saved.size <= 168 ? saved.size : 120, dark: saved.dark === true, terminal: typeof saved.terminal === 'string' ? saved.terminal : 'system', customTerminal: typeof saved.customTerminal === 'string' ? saved.customTerminal : '' };
     } catch { return defaults; }
   }
 
@@ -389,6 +389,20 @@
   async function openExternal(entry: FileEntry) {
     try { await api.open(entry.path); }
     catch (error) { notify(errorMessage(error), true); }
+  }
+
+  async function openTerminal(path: string) {
+    context = null;
+    optionsOpen = false;
+    try { await api.openTerminal(path, preferences.terminal, preferences.customTerminal); }
+    catch (error) { notify(errorMessage(error), true); }
+  }
+
+  async function chooseTerminal() {
+    try {
+      const path = await api.chooseTerminal();
+      if (path) { preferences.customTerminal = path; preferences.terminal = 'custom'; }
+    } catch (error) { notify(errorMessage(error), true); }
   }
 
   function previewImage(entry: FileEntry) {
@@ -892,6 +906,7 @@
     {#if focused && !isImage(focused) && canPreview(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览</span><kbd>Space</kbd></button>{/if}
     {#if focused && !isImage(focused)}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>打开</span><kbd>Enter</kbd></button>{/if}
     {#if focused?.isDir}<button role="menuitem" onclick={() => { const path = focused!.path; context = null; newTab(path); }}><FolderPlus size={16} /><span>在新标签页中打开</span></button><button role="menuitem" onclick={() => void openInWindow(focused!.path)}><ExternalLink size={16} /><span>在新窗口中打开</span></button>{/if}
+    {#if directory && (focused?.isDir || selected.size === 0)}<button role="menuitem" onclick={() => void openTerminal(focused?.isDir ? focused.path : directory!.path)}><Terminal size={16} /><span>在终端中打开</span></button>{/if}
     {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{shortcutModifier} C</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{shortcutModifier} X</kbd></button>{/if}
     <button role="menuitem" onclick={paste} disabled={busy || (!desktop && !clipboard)}><ClipboardPaste size={16} /><span>粘贴</span><kbd>{shortcutModifier} V</kbd></button>
     <div class="menu-divider"></div>
@@ -926,6 +941,8 @@
     <div class="settings-list">
       <label class="settings-row"><span><strong>外观</strong><small>选择浅色或深色界面</small></span><select aria-label="外观" value={preferences.dark ? 'dark' : 'light'} onchange={(event) => preferences.dark = event.currentTarget.value === 'dark'}><option value="light">浅色</option><option value="dark">深色</option></select></label>
       <label class="settings-row"><span><strong>显示方式</strong><small>选择文件的默认显示方式</small></span><select aria-label="显示方式" value={preferences.view} onchange={(event) => preferences.view = event.currentTarget.value as ViewMode}><option value="grid">图标</option><option value="list">列表</option></select></label>
+      <label class="settings-row"><span><strong>默认终端</strong><small>选择打开文件夹时使用的终端</small></span><select aria-label="默认终端" bind:value={preferences.terminal}><option value="system">系统终端</option>{#if info?.platform === 'macos'}<option value="terminal">终端</option><option value="iterm">iTerm</option><option value="warp">Warp</option>{:else if info?.platform === 'windows'}<option value="windows-terminal">Windows Terminal</option><option value="powershell">PowerShell</option><option value="cmd">命令提示符</option>{:else if info?.platform === 'linux'}<option value="gnome-terminal">GNOME Terminal</option><option value="konsole">Konsole</option><option value="xfce4-terminal">Xfce Terminal</option><option value="xterm">XTerm</option>{/if}<option value="custom" disabled={!preferences.customTerminal}>自选应用{preferences.customTerminal ? `：${basename(preferences.customTerminal)}` : ''}</option></select></label>
+      <div class="settings-row"><span><strong>终端应用</strong><small title={preferences.customTerminal}>{preferences.customTerminal || '选择本机安装的终端应用'}</small></span><button class="button" type="button" onclick={chooseTerminal}>选择应用…</button></div>
       <label class="settings-row"><span><strong>显示隐藏文件</strong><small>在文件夹中显示隐藏项目</small></span><input type="checkbox" bind:checked={preferences.hidden} /></label>
       <label class="settings-row"><span><strong>显示信息面板</strong><small>显示所选项目的详细信息</small></span><input type="checkbox" bind:checked={preferences.inspector} /></label>
       <label class="settings-row"><span><strong>图标大小</strong><small>调整图标视图中的项目大小</small></span><input type="range" min="104" max="168" step="1" bind:value={preferences.size} /></label>

@@ -546,6 +546,29 @@ describe('file manager interactions', () => {
     expect(settings.open).toBe(false);
   });
 
+  it('saves a chosen terminal application and uses it when opening a folder', async () => {
+    vi.spyOn(api, 'chooseTerminal').mockResolvedValue('/Applications/My Terminal.app');
+    const openTerminal = vi.spyOn(api, 'openTerminal').mockResolvedValue();
+    await click(button('设置'));
+    await click(button('选择应用…'));
+    expect(JSON.parse(localStorage.getItem('pudding.preferences')!)).toMatchObject({ terminal: 'custom', customTerminal: '/Applications/My Terminal.app' });
+    await click(button('完成'));
+    await contextMenu('Documents');
+    await click(menuItem('在终端中打开'));
+    expect(openTerminal).toHaveBeenCalledWith('/home/pudding/Documents', 'custom', '/Applications/My Terminal.app');
+  });
+
+  it('opens a folder or the current directory in the configured terminal', async () => {
+    const openTerminal = vi.spyOn(api, 'openTerminal').mockResolvedValue();
+    await contextMenu('Documents');
+    await click(menuItem('在终端中打开'));
+    expect(openTerminal).toHaveBeenCalledWith('/home/pudding/Documents', 'system', '');
+    host.querySelector('.file-area')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await tick();
+    await click(menuItem('在终端中打开'));
+    expect(openTerminal).toHaveBeenLastCalledWith('/home/pudding', 'system', '');
+  });
+
   it('filters, reveals hidden entries and persists view preferences', async () => {
     await click(button('更多显示选项'));
     await click(menuItem('显示隐藏文件'));
