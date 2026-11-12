@@ -430,3 +430,8 @@ h1 { margin: 4px 0 3px; font-size: 22px; color: var(--heading); letter-spacing: 
 .info-preview-properties dt { flex-shrink: 0; color: var(--secondary); }
 .info-preview-properties dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
 .info-preview-modal .info-preview-note { margin: 10px 0 0; font-size: 10px; }
+
+.open-with-list { max-height: 240px; overflow-y: auto; margin: 16px 0; }
+.open-with-list p { display: flex; align-items: center; gap: 8px; }
+.open-with-app { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px; text-align: left; border-radius: 7px; color: var(--heading); }
+.open-with-app:hover { background: var(--inset); }

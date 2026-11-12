@@ -4,6 +4,7 @@
   import FileIcon from './lib/FileIcon.svelte';
   import FileThumbnail from './lib/FileThumbnail.svelte';
   import NameDialog from './lib/NameDialog.svelte';
+  import OpenWithDialog from './lib/OpenWithDialog.svelte';
   import ImagePreview from './lib/ImagePreview.svelte';
   import ImagePreviewDialog from './lib/ImagePreviewDialog.svelte';
   import FilePreviewDialog from './lib/FilePreviewDialog.svelte';
@@ -71,6 +72,7 @@
   let noticeTimeout: ReturnType<typeof setTimeout>;
   let dialog = $state<{ mode: 'create' | 'rename'; entry?: FileEntry } | null>(null);
   let dialogError = $state('');
+  let openWithEntry = $state<FileEntry | null>(null);
   let trashDialog: HTMLDialogElement;
   let permanentDelete = $state(false);
   let helpDialog: HTMLDialogElement;
@@ -390,6 +392,11 @@
   async function openExternal(entry: FileEntry) {
     try { await api.open(entry.path); }
     catch (error) { notify(errorMessage(error), true); }
+  }
+
+  function openWith(entry: FileEntry) {
+    context = null;
+    openWithEntry = entry;
   }
 
   async function openTerminal(path: string) {
@@ -907,6 +914,7 @@
     {#if focused && !canPreview(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Info size={16} /><span>查看基本信息</span><kbd>Space</kbd></button>{/if}
     {#if focused && !isImage(focused) && canPreview(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览</span><kbd>Space</kbd></button>{/if}
     {#if focused && !isImage(focused)}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>打开</span><kbd>Enter</kbd></button>{/if}
+    {#if desktop && focused && !focused.isDir}<button role="menuitem" onclick={() => void openWith(focused!)}><ExternalLink size={16} /><span>选择其他应用打开…</span></button>{/if}
     {#if focused?.isDir}<button role="menuitem" onclick={() => { const path = focused!.path; context = null; newTab(path); }}><FolderPlus size={16} /><span>在新标签页中打开</span></button><button role="menuitem" onclick={() => void openInWindow(focused!.path)}><ExternalLink size={16} /><span>在新窗口中打开</span></button>{/if}
     {#if directory && (focused?.isDir || selected.size === 0)}<button role="menuitem" onclick={() => void openTerminal(focused?.isDir ? focused.path : directory!.path)}><Terminal size={16} /><span>在终端中打开</span></button>{/if}
     {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{shortcutModifier} C</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{shortcutModifier} X</kbd></button>{/if}
@@ -918,6 +926,7 @@
     {#if selected.size}<div class="menu-divider"></div><button role="menuitem" class="danger-text" onclick={(event) => confirmTrash(shiftHeld || event.shiftKey)}><Trash2 size={16} /><span>{shiftHeld ? '永久删除' : '移入回收站'}</span><kbd>{shiftHeld ? 'Shift Del' : 'Del'}</kbd></button>{/if}
   </div>{/key}{/if}
 
+  {#if openWithEntry}<OpenWithDialog entry={openWithEntry} onclose={() => openWithEntry = null} />{/if}
   {#if dialog}<NameDialog mode={dialog.mode} initial={dialog.mode === 'rename' ? dialog.entry?.name : ''} busy={operating} error={dialogError} onsubmit={submitName} onclose={() => { if (!operating) dialog = null; }} />{/if}
   {#if preview}{#if isImage(preview)}<ImagePreviewDialog entries={entries.filter(isImage)} initial={preview} onclose={() => preview = null} onopen={openExternal} />{:else if canPreview(preview)}<FilePreviewDialog entry={preview} onclose={() => preview = null} onopen={openExternal} />{:else}<FileInfoDialog entry={preview} onclose={() => preview = null} />{/if}{/if}
 

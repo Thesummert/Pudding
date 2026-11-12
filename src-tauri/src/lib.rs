@@ -1,6 +1,7 @@
 mod clipboard;
 mod filesystem;
 mod open_requests;
+mod open_with;
 mod rename;
 mod search;
 mod session;
@@ -260,6 +261,20 @@ async fn open_entry(app: tauri::AppHandle, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn list_open_apps(path: String) -> Result<Vec<open_with::Application>, String> {
+    blocking(move || open_with::list(&path)).await
+}
+
+#[tauri::command]
+async fn open_entry_with(path: String, application: Option<String>) -> Result<(), String> {
+    blocking(move || match application {
+        Some(id) => open_with::open_recommended(&path, &id),
+        None => open_with::choose(&path),
+    })
+    .await
+}
+
+#[tauri::command]
 async fn open_terminal(
     path: String,
     terminal: String,
@@ -383,6 +398,8 @@ pub fn run() {
             trash_entries,
             delete_entries,
             open_entry,
+            open_entry_with,
+            list_open_apps,
             open_terminal,
             choose_terminal,
             read_file_clipboard,
