@@ -76,6 +76,29 @@ afterEach(async () => {
 });
 
 describe('file manager interactions', () => {
+  it('pins selected and current folders, restores them, navigates and removes them', async () => {
+    await click(button('Documents'));
+    await click(button('固定当前或选中的文件夹'));
+    expect(JSON.parse(localStorage.getItem('pudding.pinnedFolders')!)).toEqual(['/home/pudding/Documents']);
+    expect(host.querySelector('nav[aria-label="常用位置"]')?.contains(button('打开固定文件夹 Documents'))).toBe(true);
+    expect(button('打开固定文件夹 Documents').dataset.dropPath).toBe('/home/pudding/Documents');
+    expect(button('固定当前或选中的文件夹').disabled).toBe(true);
+    await doubleClick('Documents');
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    await click(button('上一级'));
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('主文件夹.'));
+    await click(button('固定当前或选中的文件夹'));
+    await unmount(app);
+    app = mount(App, { target: host });
+    await vi.waitFor(() => expect(button('打开固定文件夹 Documents')).toBeTruthy());
+    await vi.waitFor(() => expect(button('打开固定文件夹 Documents').disabled).toBe(false));
+    expect(button('打开固定文件夹 pudding')).toBeTruthy();
+    await click(button('打开固定文件夹 Documents'));
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    await click(button('取消固定 Documents'));
+    expect(JSON.parse(localStorage.getItem('pudding.pinnedFolders')!)).toEqual(['/home/pudding']);
+  });
+
   it.each(['grid', 'list'])('selects files with a marquee in %s view and supports additive selection', async (view) => {
     if (view === 'list') await click(button('列表视图'));
     const area = host.querySelector<HTMLElement>('.file-area')!;

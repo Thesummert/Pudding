@@ -25,6 +25,13 @@
   }
 
   let preferences = $state(loadPreferences());
+  function loadPinnedFolders(): string[] {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem('pudding.pinnedFolders') || '[]');
+      return Array.isArray(saved) ? [...new Set(saved.filter((path): path is string => typeof path === 'string' && path.length > 0))] : [];
+    } catch { return []; }
+  }
+  let pinnedFolders = $state<string[]>(loadPinnedFolders());
   let info = $state<AppInfo>();
   let directory = $state<DirectoryListing>();
   let loading = $state(true);
@@ -105,6 +112,7 @@
   let entries = $derived(visibleEntries(query.trim() && searchResults !== null ? searchResults : directory?.entries ?? [], query.trim() && searchResults !== null ? '' : query, preferences.hidden, sort, descending));
   let selectedEntries = $derived(entries.filter((entry) => selected.has(entry.path)));
   let focused = $derived(selectedEntries.length === 1 ? selectedEntries[0] : undefined);
+  let pinPath = $derived(selected.size === 0 ? directory?.path : focused?.isDir ? focused.path : undefined);
   let archiveSelected = $derived(focused && !focused.isDir && /\.(?:zip|7z|tar|tar\.gz|tar\.bz2|tar\.xz|tgz|tbz2?|txz)$/i.test(focused.name));
   let currentPlace = $derived(info?.places.find((place) => place.path === directory?.path));
   let title = $derived(currentPlace?.name ?? (directory ? basename(directory.path) : '主文件夹'));
@@ -117,6 +125,9 @@
 
   $effect(() => {
     try { localStorage.setItem('pudding.preferences', JSON.stringify(preferences)); } catch { /* Optional persistence. */ }
+  });
+  $effect(() => {
+    try { localStorage.setItem('pudding.pinnedFolders', JSON.stringify(pinnedFolders)); } catch { /* Optional persistence. */ }
   });
 
   // Filtering must also update selection, so hidden files cannot be operated on accidentally.
@@ -793,11 +804,14 @@
   <div class="workspace">
     <aside class="sidebar" aria-label="位置侧栏">
       <div class="sidebar-scroll">
-        <div class="section-label">常用位置<span>PLACES</span></div>
+        <div class="section-label places-heading">常用位置<button class="icon-button compact" title={pinPath && pinnedFolders.includes(pinPath) ? '文件夹已固定' : '固定当前或选中的文件夹'} aria-label="固定当前或选中的文件夹" disabled={!pinPath || pinnedFolders.includes(pinPath)} onclick={() => { if (pinPath && !pinnedFolders.includes(pinPath)) pinnedFolders = [...pinnedFolders, pinPath]; }}><Plus size={16} /></button></div>
         <nav class="places" aria-label="常用位置">
           {#each info?.places ?? [] as place}
             {@const PlaceIcon = placeIcons[place.id] ?? Folder}
             <button data-drop-path={place.path} class:drop-target={dropRegion === 'sidebar' && dropTarget === place.path} class:active={directory?.path === place.path} onclick={() => navigate(place.path)} disabled={operating} aria-current={directory?.path === place.path ? 'page' : undefined} title={place.path}><PlaceIcon size={18} strokeWidth={1.8} /><span>{place.name}</span>{#if place.id === 'home'}<span class="home-key">⌂</span>{/if}</button>
+          {/each}
+          {#each pinnedFolders as path (path)}
+            <div class="device-row"><button class="device-open" data-drop-path={path} class:drop-target={dropRegion === 'sidebar' && dropTarget === path} class:active={directory?.path === path} title={path} aria-label={`打开固定文件夹 ${basename(path) || path}`} aria-current={directory?.path === path ? 'page' : undefined} onclick={() => navigate(path)} disabled={busy}><Folder size={18} strokeWidth={1.8} /><span>{info?.places.find((place) => place.path === path)?.name ?? (basename(path) || path)}</span></button><button class="device-eject" title="取消固定" aria-label={`取消固定 ${basename(path) || path}`} onclick={() => pinnedFolders = pinnedFolders.filter((item) => item !== path)}><X size={15} /></button></div>
           {/each}
           {#if !info}{#each Array(7) as _}<div class="sidebar-skeleton"></div>{/each}{/if}
         </nav>
