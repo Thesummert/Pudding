@@ -141,3 +141,34 @@ test('image decoding, switching, actual size and closing with Escape', async ({ 
   await image.dblclick();
   await expect(page.getByRole('dialog', { name: '海岸.svg', exact: true })).toBeVisible();
 });
+
+test('preview zooms with the wheel, pans with the left button and closes outside', async ({ page }) => {
+  await page.getByRole('button', { name: 'Pictures', exact: true }).dblclick();
+  await page.getByRole('button', { name: '海岸.svg', exact: true }).dblclick();
+  const dialog = page.getByRole('dialog', { name: '海岸.svg', exact: true });
+  const canvas = dialog.locator('.image-preview');
+  const image = canvas.locator('img');
+  await expect(image).toBeVisible();
+  const box = (await canvas.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.wheel(0, -200);
+  await expect(canvas.locator('.image-zoom')).not.toHaveText('100%');
+  const enlarged = (await image.boundingBox())!;
+  await page.mouse.down();
+  await page.mouse.move(x + 70, y + 40, { steps: 5 });
+  await page.mouse.up();
+  const moved = (await image.boundingBox())!;
+  expect(moved.x - enlarged.x).toBeCloseTo(70, 0);
+  expect(moved.y - enlarged.y).toBeCloseTo(40, 0);
+  await expect(dialog).toBeVisible();
+  await page.mouse.wheel(0, 200);
+  await expect(canvas.locator('.image-zoom')).toHaveText('100%');
+  await dialog.getByRole('button', { name: '实际大小', exact: true }).click();
+  await dialog.getByRole('button', { name: '适应窗口', exact: true }).click();
+  await expect(image).toHaveAttribute('style', /translate\(0px, 0px\) scale\(1\)/);
+  await page.mouse.click(2, 2);
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '海岸.svg', exact: true })).toBeFocused();
+});
