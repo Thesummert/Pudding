@@ -2,6 +2,7 @@ mod clipboard;
 mod filesystem;
 mod rename;
 mod search;
+mod session;
 
 use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
@@ -138,6 +139,20 @@ async fn get_app_info() -> Result<filesystem::AppInfo, String> {
 }
 
 #[tauri::command]
+fn startup_directory(state: tauri::State<'_, session::Session>) -> Option<String> {
+    state.startup_path()
+}
+
+#[tauri::command]
+fn set_window_directory(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, session::Session>,
+    path: String,
+) {
+    state.set_directory(window.label(), path);
+}
+
+#[tauri::command]
 async fn read_directory(path: String) -> Result<filesystem::DirectoryListing, String> {
     blocking(move || filesystem::read_directory(&path)).await
 }
@@ -251,14 +266,29 @@ pub fn run() {
     tauri::Builder::default()
         .manage(clipboard::SystemClipboard::default())
         .manage(search::SearchState::default())
+        .setup(|app| {
+            let session = app
+                .path()
+                .app_data_dir()
+                .ok()
+                .and_then(|path| session::Session::new(&path).ok())
+                .unwrap_or_else(session::Session::disabled);
+            app.manage(session);
+            Ok(())
+        })
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 search::unwatch(&window.state::<search::SearchState>(), window.label());
+                window
+                    .state::<session::Session>()
+                    .close_window(window.label());
             }
         })
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_app_info,
+            startup_directory,
+            set_window_directory,
             watch_directory,
             open_directory_window,
             search_files,

@@ -41,6 +41,8 @@ export const api = {
   listenSearchProgress: (handler: (progress: [number, number]) => void) => desktop ? listen<[number, number]>('search-progress', (event) => handler(event.payload)) : Promise.resolve(() => {}),
   search: (path: string, query: string, hidden: boolean, searchContent: boolean, requestId: number) => desktop ? invoke<FileEntry[]>('search_files', { path, query, hidden, searchContent, requestId }) : Promise.resolve<FileEntry[] | null>(null),
   info: () => call<AppInfo>('get_app_info'),
+  startupDirectory: () => desktop ? invoke<string | null>('startup_directory') : Promise.resolve(null),
+  setWindowDirectory: (path: string) => desktop ? invoke<void>('set_window_directory', { path }) : Promise.resolve(),
   read: (path: string) => call<DirectoryListing>('read_directory', { path }),
   create: (parent: string, name: string) => call<string>('create_folder', { parent, name }),
   rename: (path: string, name: string) => call<string>('rename_entry', { path, name }),

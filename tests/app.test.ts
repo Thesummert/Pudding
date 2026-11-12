@@ -76,6 +76,21 @@ afterEach(async () => {
 });
 
 describe('file manager interactions', () => {
+  it('restores the startup directory and records the active directory', async () => {
+    const startup = vi.spyOn(api, 'startupDirectory').mockResolvedValue('/home/pudding/Documents');
+    const record = vi.spyOn(api, 'setWindowDirectory').mockResolvedValue();
+    await unmount(app);
+    app = mount(App, { target: host });
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    expect(record).toHaveBeenCalledWith('/home/pudding/Documents');
+    await click(button('上一级'));
+    await vi.waitFor(() => expect(record).toHaveBeenCalledWith('/home/pudding'));
+    startup.mockResolvedValue(null);
+    await unmount(app);
+    app = mount(App, { target: host });
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('主文件夹.'));
+  });
+
   it('keeps Retina macOS drops in the middle pane instead of hitting the sidebar', async () => {
     const info = await api.info();
     vi.spyOn(api, 'info').mockResolvedValue({ ...info, platform: 'macos' });

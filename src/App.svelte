@@ -158,7 +158,9 @@
     initialError = '';
     try {
       info = await api.info();
-      await navigate(new URLSearchParams(window.location.search).get('path') || info.home);
+      const explicitPath = new URLSearchParams(window.location.search).get('path');
+      const restoredPath = explicitPath ? null : await api.startupDirectory().catch(() => null);
+      await navigate(explicitPath || restoredPath || info.home);
     } catch (error) {
       initialError = errorMessage(error);
       loading = false;
@@ -174,6 +176,7 @@
       const result = await api.read(path);
       if (id !== request) return;
       directory = result;
+      void api.setWindowDirectory(result.path).catch(() => {});
       if (!refresh) void api.watch(result.path).catch((error) => notify(errorMessage(error), true));
       editingAddress = false;
       initialError = '';
