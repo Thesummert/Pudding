@@ -631,7 +631,40 @@ describe('file manager interactions', () => {
     expect(host.querySelectorAll('.file-row')).toHaveLength(11);
     await click(button('切换深色外观'));
     expect(host.querySelector('.app-shell')?.getAttribute('data-theme')).toBe('dark');
-    expect(JSON.parse(localStorage.getItem('pudding.preferences')!)).toMatchObject({ hidden: true, view: 'list', dark: true });
+    expect(JSON.parse(localStorage.getItem('pudding.preferences')!)).toMatchObject({ hidden: true, view: 'grid', dark: true });
+    expect(JSON.parse(localStorage.getItem('pudding.folderDisplays')!)['/home/pudding'].view).toBe('list');
+  });
+
+  it('restores each folder’s display and sorting, and clears the records from settings', async () => {
+    await click(button('列表视图'));
+    const sort = host.querySelector<HTMLSelectElement>('[aria-label="排序方式"]')!;
+    sort.value = 'size';
+    sort.dispatchEvent(new Event('change', { bubbles: true }));
+    await click(button('切换降序'));
+    await doubleClick('Documents');
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    expect(button('图标视图').getAttribute('aria-pressed')).toBe('true');
+    expect(sort.value).toBe('name');
+    await click(button('上一级'));
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('主文件夹.'));
+    expect(button('列表视图').getAttribute('aria-pressed')).toBe('true');
+    expect(sort.value).toBe('size');
+    expect(button('切换升序')).toBeTruthy();
+    await unmount(app);
+    app = mount(App, { target: host });
+    await vi.waitFor(() => expect(button('列表视图').getAttribute('aria-pressed')).toBe('true'));
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="排序方式"]')!.value).toBe('size');
+    await click(button('设置'));
+    await click(button('清理记录'));
+    expect(localStorage.getItem('pudding.folderDisplays')).toBeNull();
+    expect(button('图标视图').getAttribute('aria-pressed')).toBe('true');
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="排序方式"]')!.value).toBe('name');
+    await click(button('完成'));
+    await doubleClick('Documents');
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    await click(button('上一级'));
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('主文件夹.'));
+    expect(button('图标视图').getAttribute('aria-pressed')).toBe('true');
   });
 
   it('updates the context menu as Shift is pressed or released', async () => {

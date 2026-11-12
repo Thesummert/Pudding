@@ -32,6 +32,20 @@
     } catch { return []; }
   }
   let pinnedFolders = $state<string[]>(loadPinnedFolders());
+  type FolderDisplay = { view: ViewMode; sort: SortKey; descending: boolean };
+  function loadFolderDisplays(): Record<string, FolderDisplay> {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem('pudding.folderDisplays') || '{}');
+      if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {};
+      return Object.fromEntries(Object.entries(saved).filter(([path, value]) => {
+        if (!path || !value || typeof value !== 'object') return false;
+        const item = value as Record<string, unknown>;
+        return (item.view === 'grid' || item.view === 'list') && ['name', 'modified', 'size', 'type'].includes(item.sort as string) && typeof item.descending === 'boolean';
+      }));
+    } catch { return {}; }
+  }
+  let folderDisplays = loadFolderDisplays();
+  let view = $state<ViewMode>(preferences.view);
   let info = $state<AppInfo>();
   let directory = $state<DirectoryListing>();
   let loading = $state(true);
@@ -238,6 +252,12 @@
     try {
       const result = await api.read(path);
       if (id !== request) return;
+      if (directory?.path !== result.path) {
+        const saved = Object.hasOwn(folderDisplays, result.path) ? folderDisplays[result.path] : undefined;
+        view = saved?.view ?? preferences.view;
+        sort = saved?.sort ?? 'name';
+        descending = saved?.descending ?? false;
+      }
       directory = result;
       void api.setWindowDirectory(result.path).catch(() => {});
       if (!refresh) void api.watch(result.path).catch((error) => notify(errorMessage(error), true));
@@ -707,9 +727,25 @@
     context = { x: Math.max(8, Math.min(event.clientX, innerWidth - 220)), y: Math.max(8, Math.min(event.clientY, innerHeight - 450)) };
   }
 
+  function saveFolderDisplay() {
+    if (!directory) return;
+    folderDisplays = { ...folderDisplays, [directory.path]: { view, sort, descending } };
+    try { localStorage.setItem('pudding.folderDisplays', JSON.stringify(folderDisplays)); } catch { /* Optional persistence. */ }
+  }
+
+  function setView(value: ViewMode) { view = value; saveFolderDisplay(); }
   function setSort(key: SortKey) {
     if (sort === key) descending = !descending;
     else { sort = key; descending = key === 'modified'; }
+    saveFolderDisplay();
+  }
+  function clearFolderDisplays() {
+    folderDisplays = {};
+    try { localStorage.removeItem('pudding.folderDisplays'); } catch { /* Optional persistence. */ }
+    view = preferences.view;
+    sort = 'name';
+    descending = false;
+    notify('已清理文件夹显示与排序记录');
   }
 
   function mouseNavigation(event: MouseEvent) {
@@ -763,7 +799,7 @@
     else if (key === 'enter' && focused && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); void openEntry(focused); }
     else if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key) && entries.length && (target.closest('.file-area') || target === document.body)) {
       event.preventDefault();
-      const columns = preferences.view === 'list' ? 1 : Math.max(1, Math.floor((fileArea.clientWidth - 48 + 12) / (preferences.size + 12)));
+      const columns = view === 'list' ? 1 : Math.max(1, Math.floor((fileArea.clientWidth - 48 + 12) / (preferences.size + 12)));
       const offset = key === 'arrowleft' ? -1 : key === 'arrowright' ? 1 : key === 'arrowup' ? -columns : columns;
       const index = entries.findIndex((e) => e.path === anchor);
       const next = index < 0 ? 0 : Math.min(entries.length - 1, Math.max(0, index + offset));
@@ -864,9 +900,9 @@
           <div class="file-toolbar">
             <div class="file-summary">{#if selected.size}<span class="selection-label">已选择 {selected.size} 项</span><button class="toolbar-text" onclick={() => selected = new Set()}>取消选择</button>{:else}<span class="folder-summary-icon"><Folder size={15} /></span><span>{folderCount} 个文件夹<span class="summary-separator">·</span>{fileCount} 个文件</span>{/if}</div>
             <div class="view-tools">
-              <div class="sort-control"><ChevronsUpDown size={14} /><select aria-label="排序方式" value={sort} onchange={(event) => { sort = event.currentTarget.value as SortKey; }}><option value="name">名称</option><option value="modified">修改时间</option><option value="size">大小</option><option value="type">类型</option></select><button class="sort-direction" title={descending ? '切换升序' : '切换降序'} aria-label={descending ? '切换升序' : '切换降序'} onclick={() => descending = !descending}>{#if descending}<ArrowDown size={13} />{:else}<ArrowUp size={13} />{/if}</button></div>
+              <div class="sort-control"><ChevronsUpDown size={14} /><select aria-label="排序方式" value={sort} onchange={(event) => { sort = event.currentTarget.value as SortKey; saveFolderDisplay(); }}><option value="name">名称</option><option value="modified">修改时间</option><option value="size">大小</option><option value="type">类型</option></select><button class="sort-direction" title={descending ? '切换升序' : '切换降序'} aria-label={descending ? '切换升序' : '切换降序'} onclick={() => { descending = !descending; saveFolderDisplay(); }}>{#if descending}<ArrowDown size={13} />{:else}<ArrowUp size={13} />{/if}</button></div>
               <span class="tool-separator"></span>
-              <div class="view-switch" aria-label="显示方式"><button class:active={preferences.view === 'grid'} title="图标视图" aria-label="图标视图" aria-pressed={preferences.view === 'grid'} onclick={() => preferences.view = 'grid'}><LayoutGrid size={16} /></button><button class:active={preferences.view === 'list'} title="列表视图" aria-label="列表视图" aria-pressed={preferences.view === 'list'} onclick={() => preferences.view = 'list'}><List size={17} /></button></div>
+              <div class="view-switch" aria-label="显示方式"><button class:active={view === 'grid'} title="图标视图" aria-label="图标视图" aria-pressed={view === 'grid'} onclick={() => setView('grid')}><LayoutGrid size={16} /></button><button class:active={view === 'list'} title="列表视图" aria-label="列表视图" aria-pressed={view === 'list'} onclick={() => setView('list')}><List size={17} /></button></div>
               <button class="icon-button compact inspector-toggle" class:active={preferences.inspector} title="信息面板" aria-label="信息面板" aria-pressed={preferences.inspector} onclick={() => preferences.inspector = !preferences.inspector}><PanelRight size={17} /></button>
               <div class="options-container"><button class="icon-button compact" title="更多显示选项" aria-label="更多显示选项" aria-expanded={optionsOpen} onclick={(event) => { event.stopPropagation(); optionsOpen = !optionsOpen; context = null; }}><MoreHorizontal size={19} /></button>
                 {#if optionsOpen}<div class="dropdown-menu" role="menu"><button role="menuitemcheckbox" aria-checked={preferences.hidden} onclick={() => preferences.hidden = !preferences.hidden}>{#if preferences.hidden}<Eye size={16} />{:else}<EyeOff size={16} />{/if}<span>显示隐藏文件</span>{#if preferences.hidden}<Check size={14} />{/if}</button><button role="menuitem" onclick={copyPath}><Link2 size={16} /><span>复制当前路径</span></button><button role="menuitem" onclick={refresh} disabled={busy}><RotateCw size={16} /><span>刷新文件夹</span><kbd>F5</kbd></button></div>{/if}
@@ -878,14 +914,14 @@
 
           {#if dropTarget}<div class="drop-hint" role="status">松开后选择复制或移动到「{basename(dropTarget) || dropTarget}」 · Ctrl 复制 · Shift 移动</div>{/if}
 
-          <div class="file-area" data-drop-path={directory?.path} class:drop-target={dropRegion === 'browser' && dropTarget === directory?.path} class:loading class:list-view={preferences.view === 'list'} bind:this={fileArea} role="group" aria-label="文件和文件夹" aria-busy={busy} onpointerdown={beginMarquee} oncontextmenu={(event) => contextMenu(event)}>
+          <div class="file-area" data-drop-path={directory?.path} class:drop-target={dropRegion === 'browser' && dropTarget === directory?.path} class:loading class:list-view={view === 'list'} bind:this={fileArea} role="group" aria-label="文件和文件夹" aria-busy={busy} onpointerdown={beginMarquee} oncontextmenu={(event) => contextMenu(event)}>
             {#if initialError}
               <div class="empty-state"><span class="empty-icon error"><CircleAlert size={34} strokeWidth={1.3} /></span><h2>暂时无法打开文件夹</h2><p>{initialError}</p><button class="button" onclick={() => info ? navigate(info.home) : initialize()}><RotateCw size={15} />重新尝试</button></div>
             {:else if !directory && loading}
               <div class="empty-state"><LoaderCircle class="spin" size={28} /><p>正在读取文件夹…</p></div>
             {:else if !entries.length}
               <div class="empty-state"><span class="empty-icon">{#if query}<Search size={34} strokeWidth={1.3} />{:else}<Folder size={38} strokeWidth={1.2} />{/if}</span><h2>{query ? '没有找到匹配的项目' : '文件夹为空'}</h2><p>{query ? (searchContent ? '试试其他文件名或文本内容。' : '试试其他文件名。') : '可以创建一个文件夹。'}</p>{#if query}<button class="button" onclick={() => query = ''}>清除搜索</button>{:else}<button class="button" onclick={() => openDialog('create')} disabled={busy}><FolderPlus size={16} />新建文件夹</button>{/if}</div>
-            {:else if preferences.view === 'grid'}
+            {:else if view === 'grid'}
               <div class="file-grid" style={`--cell-size: ${preferences.size}px`}>
                 {#each entries as entry, index (entry.path)}
                   <button class="file-card" draggable={!desktop && !busy} onpointerdown={(event) => beginDrag(event, entry)} ondragstart={(event) => demoDragStart(event, entry)} data-drop-path={entry.isDir ? entry.path : undefined} class:drop-target={dropRegion === 'browser' && dropTarget === entry.path} class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} title={`${entry.name}\n${entry.isDir ? '文件夹' : formatSize(entry.size)}\n双击打开`} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
@@ -907,7 +943,7 @@
             {/if}
           </div>
 
-          <div class="browser-bottom"><span><span class="small-status-dot"></span>{query ? `筛选出 ${entries.length} 个项目` : `${entries.length} 个项目`}{#if selected.size}<span class="summary-separator">·</span>已选择 {selected.size} 项{#if selectedSize > 0}，{formatSize(selectedSize)}{/if}{/if}</span><span class="zoom-controls">{#if preferences.view === 'grid'}<LayoutGrid size={12} /><input type="range" aria-label="图标大小" min="104" max="168" step="1" value={preferences.size} oninput={(event) => preferences.size = Number(event.currentTarget.value)} /><LayoutGrid size={16} />{:else}<List size={13} /><span>详细列表</span>{/if}</span></div>
+          <div class="browser-bottom"><span><span class="small-status-dot"></span>{query ? `筛选出 ${entries.length} 个项目` : `${entries.length} 个项目`}{#if selected.size}<span class="summary-separator">·</span>已选择 {selected.size} 项{#if selectedSize > 0}，{formatSize(selectedSize)}{/if}{/if}</span><span class="zoom-controls">{#if view === 'grid'}<LayoutGrid size={12} /><input type="range" aria-label="图标大小" min="104" max="168" step="1" value={preferences.size} oninput={(event) => preferences.size = Number(event.currentTarget.value)} /><LayoutGrid size={16} />{:else}<List size={13} /><span>详细列表</span>{/if}</span></div>
         </section>
 
         {#if preferences.inspector}
@@ -992,7 +1028,8 @@
     <h2 id="settings-title">设置</h2><p>调整文件浏览的外观与显示方式，修改会自动保存。</p>
     <div class="settings-list">
       <label class="settings-row"><span><strong>外观</strong><small>选择浅色或深色界面</small></span><select aria-label="外观" value={preferences.dark ? 'dark' : 'light'} onchange={(event) => preferences.dark = event.currentTarget.value === 'dark'}><option value="light">浅色</option><option value="dark">深色</option></select></label>
-      <label class="settings-row"><span><strong>显示方式</strong><small>选择文件的默认显示方式</small></span><select aria-label="显示方式" value={preferences.view} onchange={(event) => preferences.view = event.currentTarget.value as ViewMode}><option value="grid">图标</option><option value="list">列表</option></select></label>
+      <label class="settings-row"><span><strong>显示方式</strong><small>选择文件的默认显示方式</small></span><select aria-label="显示方式" value={preferences.view} onchange={(event) => { preferences.view = event.currentTarget.value as ViewMode; if (!directory || !Object.hasOwn(folderDisplays, directory.path)) view = preferences.view; }}><option value="grid">图标</option><option value="list">列表</option></select></label>
+      <div class="settings-row"><span><strong>文件夹显示与排序记录</strong><small>清理各文件夹保存的显示方式和排序方式</small></span><button class="button" type="button" onclick={clearFolderDisplays}>清理记录</button></div>
       <label class="settings-row"><span><strong>默认终端</strong><small>选择打开文件夹时使用的终端</small></span><select aria-label="默认终端" bind:value={preferences.terminal}><option value="system">系统终端</option>{#if info?.platform === 'macos'}<option value="terminal">终端</option><option value="iterm">iTerm</option><option value="warp">Warp</option>{:else if info?.platform === 'windows'}<option value="windows-terminal">Windows Terminal</option><option value="powershell">PowerShell</option><option value="cmd">命令提示符</option>{:else if info?.platform === 'linux'}<option value="gnome-terminal">GNOME Terminal</option><option value="konsole">Konsole</option><option value="xfce4-terminal">Xfce Terminal</option><option value="xterm">XTerm</option>{/if}<option value="custom" disabled={!preferences.customTerminal}>自选应用{preferences.customTerminal ? `：${basename(preferences.customTerminal)}` : ''}</option></select></label>
       <div class="settings-row"><span><strong>终端应用</strong><small title={preferences.customTerminal}>{preferences.customTerminal || '选择本机安装的终端应用'}</small></span><button class="button" type="button" onclick={chooseTerminal}>选择应用…</button></div>
       <label class="settings-row"><span><strong>显示隐藏文件</strong><small>在文件夹中显示隐藏项目</small></span><input type="checkbox" bind:checked={preferences.hidden} /></label>
