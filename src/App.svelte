@@ -49,6 +49,8 @@
   let clipboard = $state<Clipboard>(null);
   let dropTarget = $state<string | null>(null);
   let dropRegion = $state<'browser' | 'sidebar' | 'breadcrumbs' | null>(null);
+  let dropMenu = $state<{ x: number; y: number; sources: string[]; destination: string } | null>(null);
+  let dragModifiers = { ctrl: false, shift: false };
   let clipboardRequest = 0;
   let dragGesture: { x: number; y: number; entry: FileEntry; pointerId: number } | null = null;
   let demoDrag: string[] | null = null;
@@ -376,17 +378,36 @@
     const position = dragClientPosition(event.position, info?.platform ?? '', window.devicePixelRatio);
     const target = dropPath(position.x, position.y);
     dropTarget = event.type === 'drop' ? null : target;
-    if (event.type === 'drop' && target) void receiveDrop(event.paths, target);
+    if (event.type === 'drop' && target) void chooseDrop(event.paths, target, position, { ...dragModifiers }, true);
   }
 
-  async function receiveDrop(sources: string[], destination: string) {
+  async function chooseDrop(sources: string[], destination: string, position: { x: number; y: number }, modifiers: { ctrl: boolean; shift: boolean }, native = false) {
+    if (!sources.length || busy) return;
+    dropMenu = null;
+    if (native) {
+      try { modifiers = await api.dropModifiers(); } catch { /* Fall back to the last keyboard state. */ }
+    }
+    if (modifiers.ctrl !== modifiers.shift) {
+      void receiveDrop(sources, destination, modifiers.ctrl ? 'copy' : 'cut');
+    } else {
+      dropMenu = { sources, destination, x: Math.max(8, Math.min(position.x, innerWidth - 220)), y: Math.max(8, Math.min(position.y, innerHeight - 120)) };
+    }
+  }
+
+  function confirmDrop(mode: 'copy' | 'cut') {
+    const pending = dropMenu;
+    dropMenu = null;
+    if (pending) void receiveDrop(pending.sources, pending.destination, mode);
+  }
+
+  async function receiveDrop(sources: string[], destination: string, mode: 'copy' | 'cut') {
     if (!sources.length || !directory || busy) return;
     const current = directory.path;
     operating = true;
     let paths: string[] = [];
     try {
-      paths = await api.transfer(sources, destination, 'copy');
-      notify(`已复制 ${paths.length} 个项目到「${basename(destination) || destination}」`);
+      paths = await api.transfer(sources, destination, mode);
+      notify(`已${mode === 'cut' ? '移动' : '复制'} ${paths.length} 个项目到「${basename(destination) || destination}」`);
     } catch (error) { notify(errorMessage(error), true); }
     finally {
       operating = false;
@@ -414,14 +435,14 @@
     if (!selected.has(entry.path)) selected = new Set([entry.path]);
     demoDrag = [...selected];
     event.dataTransfer?.setData('application/x-pudding-files', JSON.stringify(demoDrag));
-    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copyMove';
   }
 
   function demoDragOver(event: DragEvent) {
     if (!demoDrag) return;
     const target = dropPath(event.clientX, event.clientY);
     dropTarget = target;
-    if (target) { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'; }
+    if (target) { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = event.shiftKey && !event.ctrlKey ? 'move' : 'copy'; }
   }
 
   function demoDrop(event: DragEvent) {
@@ -431,7 +452,7 @@
     const paths = demoDrag;
     demoDrag = null;
     dropTarget = null;
-    if (target) void receiveDrop(paths, target);
+    if (target) void chooseDrop(paths, target, { x: event.clientX, y: event.clientY }, { ctrl: event.ctrlKey, shift: event.shiftKey });
   }
 
   function confirmTrash() {
@@ -481,7 +502,9 @@
   }
 
   function keydown(event: KeyboardEvent) {
+    dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey };
     if (event.key === 'Escape') {
+      dropMenu = null;
       context = null;
       optionsOpen = false;
       if (editingAddress) editingAddress = false;
@@ -525,7 +548,7 @@
   }
 </script>
 
-<svelte:window onfocus={() => void syncClipboard()} onpointermove={pointerMove} onpointerup={() => dragGesture = null} onpointercancel={() => dragGesture = null} ondragover={demoDragOver} ondrop={demoDrop} ondragend={() => { demoDrag = null; dropTarget = null; }} ondragleave={(event) => { if (!event.relatedTarget) dropTarget = null; }} onkeydown={keydown} onclick={() => { context = null; optionsOpen = false; }} onblur={() => { context = null; optionsOpen = false; dragGesture = null; dropTarget = null; }} onresize={() => context = null} />
+<svelte:window onfocus={() => void syncClipboard()} onpointermove={pointerMove} onpointerup={() => dragGesture = null} onpointercancel={() => dragGesture = null} ondragover={demoDragOver} ondrop={demoDrop} ondragend={() => { demoDrag = null; dropTarget = null; }} ondragleave={(event) => { if (!event.relatedTarget) dropTarget = null; }} onkeydown={keydown} onkeyup={(event) => dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey }} onclick={() => { context = null; optionsOpen = false; dropMenu = null; }} onblur={() => { context = null; optionsOpen = false; dragGesture = null; dropTarget = null; }} onresize={() => context = null} />
 
 <div class="app-shell" data-theme={preferences.dark ? 'dark' : 'light'}>
   <header class="app-header">
@@ -622,7 +645,7 @@
 
           {#if clipboard}<div class="clipboard-strip">{#if clipboard.mode === 'copy'}<Copy size={14} />{:else}<Scissors size={14} />{/if}<span>{clipboard.paths.length} 个项目等待{clipboard.mode === 'cut' ? '移动' : '复制'}</span><button onclick={paste} disabled={busy}>粘贴到此处 <ClipboardPaste size={13} /></button><button class="icon-button" title="取消剪贴操作" aria-label="取消剪贴操作" onclick={cancelClipboard} disabled={operating}><X size={13} /></button></div>{/if}
 
-          {#if dropTarget}<div class="drop-hint" role="status">松开以复制到「{basename(dropTarget) || dropTarget}」</div>{/if}
+          {#if dropTarget}<div class="drop-hint" role="status">松开后选择复制或移动到「{basename(dropTarget) || dropTarget}」 · Ctrl 复制 · Shift 移动</div>{/if}
 
           <div class="file-area" data-drop-path={directory?.path} class:drop-target={dropRegion === 'browser' && dropTarget === directory?.path} class:loading class:list-view={preferences.view === 'list'} bind:this={fileArea} role="group" aria-label="文件和文件夹" aria-busy={busy} oncontextmenu={(event) => contextMenu(event)}>
             {#if initialError}
@@ -678,6 +701,12 @@
   </div>
 
   {#if notice}<div class="toast" class:error={notice.error} role={notice.error ? 'alert' : 'status'}>{#if notice.error}<CircleAlert size={18} />{:else}<Check size={18} />{/if}<span>{notice.text}</span><button class="icon-button compact" title="关闭提示" aria-label="关闭提示" onclick={() => notice = null}><X size={15} /></button></div>{/if}
+
+  {#if dropMenu}<div class="context-menu drop-menu" role="menu" aria-label="选择拖放操作" style={`left: ${dropMenu.x}px; top: ${dropMenu.y}px`}>
+    <button role="menuitem" onclick={() => confirmDrop('copy')}><Copy size={16} /><span>复制到此处</span><kbd>Ctrl</kbd></button>
+    <button role="menuitem" onclick={() => confirmDrop('cut')}><Scissors size={16} /><span>移动到此处</span><kbd>Shift</kbd></button>
+    <button role="menuitem" onclick={() => dropMenu = null}><X size={16} /><span>取消</span><kbd>Esc</kbd></button>
+  </div>{/if}
 
   {#if context}<div class="context-menu" role="menu" style={`left: ${context.x}px; top: ${context.y}px`}>
     {#if focused && isImage(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览图片</span><kbd>Space</kbd></button><button role="menuitem" onclick={() => { context = null; void openExternal(focused!); }}><ExternalLink size={16} /><span>使用默认应用打开</span></button>{/if}

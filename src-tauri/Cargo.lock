@@ -2910,6 +2910,7 @@ dependencies = [
  "clipboard-rs",
  "dirs 6.0.0",
  "drag",
+ "gtk",
  "libc",
  "notify",
  "objc2",

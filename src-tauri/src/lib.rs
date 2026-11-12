@@ -34,6 +34,62 @@ async fn write_clipboard_text(app: tauri::AppHandle, text: String) -> Result<(),
     blocking(move || app.state::<clipboard::SystemClipboard>().text(text)).await
 }
 
+#[derive(serde::Serialize)]
+struct DropModifiers {
+    ctrl: bool,
+    shift: bool,
+}
+
+#[tauri::command]
+async fn drop_modifiers(window: tauri::WebviewWindow) -> Result<DropModifiers, String> {
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    window
+        .run_on_main_thread(move || {
+            let _ = sender.try_send(read_drop_modifiers());
+        })
+        .map_err(|e| e.to_string())?;
+    receiver
+        .recv()
+        .await
+        .ok_or("无法读取修饰键状态".to_string())?
+}
+
+fn read_drop_modifiers() -> Result<DropModifiers, String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{NSEvent, NSEventModifierFlags};
+        let flags = NSEvent::modifierFlags_class();
+        Ok(DropModifiers {
+            ctrl: flags.contains(NSEventModifierFlags::Control),
+            shift: flags.contains(NSEventModifierFlags::Shift),
+        })
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+            GetAsyncKeyState, VK_CONTROL, VK_SHIFT,
+        };
+        Ok(DropModifiers {
+            ctrl: unsafe { GetAsyncKeyState(VK_CONTROL as i32) } < 0,
+            shift: unsafe { GetAsyncKeyState(VK_SHIFT as i32) } < 0,
+        })
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let display = gtk::gdk::Display::default().ok_or("无法读取显示器")?;
+        let keymap = gtk::gdk::Keymap::for_display(&display).ok_or("无法读取键盘状态")?;
+        let state = keymap.modifier_state();
+        Ok(DropModifiers {
+            ctrl: state & gtk::gdk::ModifierType::CONTROL_MASK.bits() != 0,
+            shift: state & gtk::gdk::ModifierType::SHIFT_MASK.bits() != 0,
+        })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        Err("无法读取键盘状态".into())
+    }
+}
+
 #[tauri::command]
 async fn start_file_drag(window: tauri::WebviewWindow, paths: Vec<String>) -> Result<(), String> {
     let paths = blocking(move || clipboard::drag_paths(paths)).await?;
@@ -212,7 +268,8 @@ pub fn run() {
             write_file_clipboard,
             clear_file_clipboard,
             write_clipboard_text,
-            start_file_drag
+            start_file_drag,
+            drop_modifiers
         ])
         .run(tauri::generate_context!())
         .expect("无法启动 Pudding");

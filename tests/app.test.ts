@@ -96,9 +96,13 @@ describe('file manager interactions', () => {
     expect(host.querySelector('.file-area.drop-target')).not.toBeNull();
     expect(host.querySelector('.places .drop-target')).toBeNull();
     nativeDrop({ type: 'drop', position: new PhysicalPosition(400, 300), paths: ['/tmp/空白落点.txt'] });
+    await vi.waitFor(() => expect(host.querySelector('.drop-menu')).not.toBeNull());
+    await click(menuItem('复制到此处'));
     await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith(['/tmp/空白落点.txt'], '/home/pudding', 'copy'));
     await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
     nativeDrop({ type: 'drop', position: new PhysicalPosition(450, 400), paths: ['/tmp/文件夹落点.txt'] });
+    await vi.waitFor(() => expect(host.querySelector('.drop-menu')).not.toBeNull());
+    await click(menuItem('复制到此处'));
     await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith(['/tmp/文件夹落点.txt'], '/home/pudding/Documents', 'copy'));
     expect(hit).toHaveBeenCalledWith(400, 300);
     expect(hit).toHaveBeenCalledWith(450, 400);
@@ -151,15 +155,21 @@ describe('file manager interactions', () => {
     expect(button('Documents').classList.contains('drop-target')).toBe(true);
     expect(hit).toHaveBeenCalledWith(200 / window.devicePixelRatio, 240 / window.devicePixelRatio);
     nativeDrop({ type: 'drop', position, paths: ['/tmp/外部文件.txt'] });
+    await vi.waitFor(() => expect(host.querySelector('.drop-menu')).not.toBeNull());
+    await click(menuItem('复制到此处'));
     await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith(['/tmp/外部文件.txt'], '/home/pudding/Documents', 'copy'));
     await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
     expect(host.querySelector('.drop-hint')).toBeNull();
     hit.mockReturnValue(host.querySelector('[data-drop-path="/home/pudding/Downloads"]'));
     nativeDrop({ type: 'drop', position, paths: ['/tmp/第二项'] });
+    await vi.waitFor(() => expect(host.querySelector('.drop-menu')).not.toBeNull());
+    await click(menuItem('复制到此处'));
     await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith(['/tmp/第二项'], '/home/pudding/Downloads', 'copy'));
     await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
     hit.mockReturnValue(button('开始使用.md'));
     nativeDrop({ type: 'drop', position, paths: ['/tmp/第三项'] });
+    await vi.waitFor(() => expect(host.querySelector('.drop-menu')).not.toBeNull());
+    await click(menuItem('复制到此处'));
     await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith(['/tmp/第三项'], '/home/pudding', 'copy'));
     await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
     // Both whitespace between entries and the surrounding middle pane use
@@ -170,6 +180,8 @@ describe('file manager interactions', () => {
       await tick();
       expect(host.querySelector('.file-area')?.classList.contains('drop-target')).toBe(true);
       nativeDrop({ type: 'drop', position, paths: [`/tmp/${selector}`] });
+      await vi.waitFor(() => expect(host.querySelector('.drop-menu')).not.toBeNull());
+      await click(menuItem('复制到此处'));
       await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith([`/tmp/${selector}`], '/home/pudding', 'copy'));
       await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
     }
@@ -179,6 +191,25 @@ describe('file manager interactions', () => {
     nativeDrop({ type: 'leave' });
     await tick();
     expect(host.querySelector('.drop-target')).toBeNull();
+  });
+
+  it('offers drop actions and uses modifiers for immediate transfers', async () => {
+    const transfer = vi.spyOn(api, 'transfer').mockResolvedValue([]);
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(host.querySelector('.file-area'));
+    const position = new PhysicalPosition(120, 120);
+    nativeDrop({ type: 'drop', position, paths: ['/tmp/move'] });
+    await vi.waitFor(() => expect(host.querySelector('.drop-menu')).not.toBeNull());
+    expect(transfer).not.toHaveBeenCalled();
+    await click(menuItem('移动到此处'));
+    await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith(['/tmp/move'], '/home/pudding', 'cut'));
+    await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
+    vi.spyOn(api, 'dropModifiers').mockResolvedValue({ ctrl: true, shift: false });
+    nativeDrop({ type: 'drop', position, paths: ['/tmp/copy'] });
+    await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith(['/tmp/copy'], '/home/pudding', 'copy'));
+    await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
+    vi.mocked(api.dropModifiers).mockResolvedValue({ ctrl: false, shift: true });
+    nativeDrop({ type: 'drop', position, paths: ['/tmp/shift'] });
+    await vi.waitFor(() => expect(transfer).toHaveBeenCalledWith(['/tmp/shift'], '/home/pudding', 'cut'));
   });
 
   it('removes the native drop listener on unmount', async () => {

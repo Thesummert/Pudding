@@ -27,6 +27,7 @@ export const api = {
     if (desktop) await invoke('write_clipboard_text', { text });
     else { await navigator.clipboard.writeText(text); demoClipboard = null; }
   },
+  dropModifiers: () => desktop ? invoke<{ ctrl: boolean; shift: boolean }>('drop_modifiers') : Promise.resolve({ ctrl: false, shift: false }),
   startDrag: (paths: string[]) => invoke<void>('start_file_drag', { paths }),
   listenDrop: (handler: (event: DragDropEvent) => void): Promise<() => void> => desktop
     ? getCurrentWebview().onDragDropEvent((event) => handler(event.payload))
