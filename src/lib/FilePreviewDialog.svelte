@@ -3,7 +3,7 @@
   import { ExternalLink, LoaderCircle, X } from '@lucide/svelte';
   import PdfPreview from './PdfPreview.svelte';
   import { api } from './api';
-  import { formatSize, isPdf, isText, isVideo } from './files';
+  import { formatEntrySize, isPdf, isText, isVideo } from './files';
   import type { FileEntry } from './types';
 
   let { entry, onclose, onopen }: { entry: FileEntry; onclose: () => void; onopen: (entry: FileEntry) => void } = $props();
@@ -61,7 +61,7 @@
 </script>
 
 <dialog bind:this={dialog} class="modal file-preview-modal" aria-labelledby="file-preview-title" onpointerdown={(event) => backdropDown = event.button === 0 && outside(event)} onclick={(event) => { if (backdropDown && outside(event)) close(); backdropDown = false; }} oncancel={(event) => { event.preventDefault(); close(); }} onkeydown={keydown}>
-  <div class="image-modal-header"><div class="image-modal-title"><h2 id="file-preview-title">{entry.name}</h2><span>{formatSize(entry.size)}</span></div><button class="button" onclick={() => { close(); onopen(entry); }}><ExternalLink size={16} />使用默认应用打开</button><button class="icon-button" title="关闭预览 (Esc)" aria-label="关闭预览" onclick={close}><X size={20} /></button></div>
+  <div class="image-modal-header"><div class="image-modal-title"><h2 id="file-preview-title">{entry.name}</h2><span>{formatEntrySize(entry)}</span></div><button class="button" onclick={() => { close(); onopen(entry); }}><ExternalLink size={16} />使用默认应用打开</button><button class="icon-button" title="关闭预览 (Esc)" aria-label="关闭预览" onclick={close}><X size={20} /></button></div>
   <div class="file-preview-stage">
     {#if error}<div class="file-preview-message" role="status">无法预览：{error}</div>
     {:else if loading}<div class="file-preview-message" role="status"><LoaderCircle size={22} class="spin" />正在加载…</div>

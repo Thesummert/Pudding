@@ -232,6 +232,46 @@ describe('file manager interactions', () => {
     await api.delete(['/home/pudding/开始使用 副本.md', '/home/pudding/Documents/开始使用.md']);
   });
 
+  it('renders only nearby items in large directories and keeps their original indices', async () => {
+    const listing = await api.read('/home/pudding');
+    const template = listing.entries.find((entry) => !entry.isDir)!;
+    const entries = Array.from({ length: 2000 }, (_, i) => ({ ...template, name: `文件 ${String(i).padStart(4, '0')}.txt`, path: `/home/pudding/file-${i}.txt` }));
+    vi.spyOn(api, 'read').mockResolvedValue({ ...listing, entries });
+    const area = host.querySelector<HTMLDivElement>('.file-area')!;
+    Object.defineProperties(area, { clientWidth: { configurable: true, value: 680 }, clientHeight: { configurable: true, value: 400 } });
+    area.dispatchEvent(new Event('scroll'));
+    await click(button('刷新'));
+    await vi.waitFor(() => expect(host.textContent).toContain('2000 个项目'));
+    expect(host.querySelectorAll('.file-card').length).toBeLessThan(100);
+    area.scrollTop = 4000;
+    area.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => expect(Number(host.querySelector('.file-card')?.getAttribute('data-index'))).toBeGreaterThan(0));
+    const first = host.querySelector<HTMLButtonElement>('.file-card')!;
+    await click(first);
+    expect(first.getAttribute('aria-pressed')).toBe('true');
+    await click(button('列表视图'));
+    await vi.waitFor(() => expect(host.querySelectorAll('.file-row').length).toBeGreaterThan(0));
+    expect(host.querySelectorAll('.file-row').length).toBeLessThan(30);
+  });
+
+  it('loads only visible pending metadata and replaces unknown sizes', async () => {
+    const listing = await api.read('/home/pudding');
+    const template = listing.entries.find((entry) => !entry.isDir)!;
+    const entries = Array.from({ length: 1000 }, (_, i) => ({ ...template, name: `照片 ${String(i).padStart(4, '0')}.txt`, path: `/home/pudding/photo-${i}.txt`, size: 0, modified: null, metadataPending: true }));
+    vi.spyOn(api, 'read').mockResolvedValue({ ...listing, entries });
+    const details = vi.spyOn(api, 'readEntryDetails').mockImplementation(async (_path, names) => entries.filter((entry) => names.includes(entry.name)).map((entry) => ({ ...entry, size: 2048, modified: 1, metadataPending: false })));
+    const area = host.querySelector<HTMLDivElement>('.file-area')!;
+    Object.defineProperties(area, { clientWidth: { configurable: true, value: 680 }, clientHeight: { configurable: true, value: 400 } });
+    area.dispatchEvent(new Event('scroll'));
+    await click(button('刷新'));
+    await vi.waitFor(() => expect(details).toHaveBeenCalled());
+    await vi.waitFor(() => expect(host.querySelector('.file-card .file-caption')?.textContent).toBe('2 KB'));
+    expect(details.mock.calls.flatMap((call) => call[1]).length).toBeLessThan(100);
+    area.scrollTop = 8000;
+    area.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => expect(details.mock.calls.length).toBeGreaterThan(1));
+  });
+
   it('reads fresh clipboard contents at paste time and reports failed clipboard writes', async () => {
     await contextMenu('开始使用.md');
     vi.spyOn(api, 'writeClipboard').mockRejectedValueOnce(new Error('系统剪贴板不可用'));

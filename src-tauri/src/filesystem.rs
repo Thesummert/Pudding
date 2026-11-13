@@ -19,6 +19,7 @@ pub struct FileEntry {
     pub(crate) modified: Option<u64>,
     pub(crate) hidden: bool,
     pub(crate) extension: String,
+    pub(crate) metadata_pending: bool,
 }
 
 #[derive(Serialize)]
@@ -135,51 +136,88 @@ pub fn app_info() -> Result<AppInfo> {
 }
 
 pub fn read_directory(path: &str) -> Result<DirectoryListing> {
+    read_directory_impl(path, true)
+}
+
+pub fn read_directory_full(path: &str) -> Result<DirectoryListing> {
+    read_directory_impl(path, false)
+}
+
+#[cfg(target_os = "macos")]
+fn is_smb_directory(path: &Path) -> bool {
+    use std::{
+        ffi::{CStr, CString},
+        os::unix::ffi::OsStrExt,
+    };
+    let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: statfs writes the entire statfs structure on success.
+    if unsafe { libc::statfs(path.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return false;
+    }
+    let stat = unsafe { stat.assume_init() };
+    // SAFETY: macOS provides f_fstypename as a NUL-terminated array.
+    unsafe { CStr::from_ptr(stat.f_fstypename.as_ptr()) }.to_bytes() == b"smbfs"
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_smb_directory(_path: &Path) -> bool {
+    false
+}
+
+fn read_directory_impl(path: &str, allow_lazy: bool) -> Result<DirectoryListing> {
     let directory = resolve_directory(path)?;
     let reader = fs::read_dir(&directory).map_err(|e| io_error("无法读取", &directory, e))?;
-    let mut entries = Vec::new();
+    // Enumerate first, then bound concurrent metadata requests. On network
+    // mounts a serial stat per entry adds one round trip to every file.
     let mut skipped = 0;
-    for result in reader {
-        let Ok(entry) = result else {
-            skipped += 1;
-            continue;
-        };
-        let path = entry.path();
-        let Ok(link_metadata) = fs::symlink_metadata(&path) else {
-            skipped += 1;
-            continue;
-        };
-        let is_symlink = link_metadata.is_symlink();
-        let target_metadata = if is_symlink {
-            fs::metadata(&path).ok()
-        } else {
-            None
-        };
-        let metadata = target_metadata.as_ref().unwrap_or(&link_metadata);
-        let name = entry.file_name().to_string_lossy().to_string();
-        let hidden = name.starts_with('.');
-        #[cfg(windows)]
-        let hidden = {
-            use std::os::windows::fs::MetadataExt;
-            hidden || link_metadata.file_attributes() & 0x2 != 0
-        };
-        entries.push(FileEntry {
-            hidden,
-            name,
-            path: display(&path),
-            is_dir: metadata.is_dir(),
-            is_symlink,
-            size: if metadata.is_dir() { 0 } else { metadata.len() },
-            modified: metadata
-                .modified()
-                .ok()
-                .and_then(|v| v.duration_since(UNIX_EPOCH).ok())
-                .map(|v| v.as_secs()),
-            extension: path
-                .extension()
-                .map(|s| s.to_string_lossy().to_lowercase())
-                .unwrap_or_default(),
-        });
+    let mut seen = std::collections::HashSet::new();
+    let items: Vec<_> = reader
+        .filter_map(|item| match item {
+            Ok(entry) if seen.insert(entry.file_name()) => Some(entry),
+            Ok(_) => None,
+            Err(_) => {
+                skipped += 1;
+                None
+            }
+        })
+        .collect();
+    let lazy = allow_lazy && items.len() >= 128 && is_smb_directory(&directory);
+    let workers = if items.len() >= 64 { 8 } else { 1 };
+    let chunk_size = items.len().div_ceil(workers).max(1);
+    let groups = std::thread::scope(|scope| {
+        let handles: Vec<_> = items
+            .chunks(chunk_size)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .map(|entry| {
+                            if lazy {
+                                directory_entry_basic(entry)
+                            } else {
+                                directory_entry(entry)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("directory metadata worker panicked"))
+            .collect::<Vec<_>>()
+    });
+    let mut entries = Vec::with_capacity(items.len());
+    for group in groups {
+        for entry in group {
+            match entry {
+                Some(entry) => entries.push(entry),
+                None => skipped += 1,
+            }
+        }
     }
     Ok(DirectoryListing {
         path: display(&directory),
@@ -187,6 +225,132 @@ pub fn read_directory(path: &str) -> Result<DirectoryListing> {
         entries,
         skipped,
     })
+}
+
+fn directory_entry(entry: &fs::DirEntry) -> Option<FileEntry> {
+    let path = entry.path();
+    // DirEntry::metadata can reuse the directory enumeration's attributes on
+    // Windows and, like symlink_metadata, does not follow symbolic links.
+    let link_metadata = entry.metadata().ok()?;
+    let is_symlink = link_metadata.is_symlink();
+    let target_metadata = if is_symlink {
+        fs::metadata(&path).ok()
+    } else {
+        None
+    };
+    let metadata = target_metadata.as_ref().unwrap_or(&link_metadata);
+    let name = entry.file_name().to_string_lossy().to_string();
+    let hidden = name.starts_with('.');
+    #[cfg(windows)]
+    let hidden = {
+        use std::os::windows::fs::MetadataExt;
+        hidden || link_metadata.file_attributes() & 0x2 != 0
+    };
+    Some(FileEntry {
+        hidden,
+        name,
+        path: display(&path),
+        is_dir: metadata.is_dir(),
+        is_symlink,
+        size: if metadata.is_dir() { 0 } else { metadata.len() },
+        modified: metadata
+            .modified()
+            .ok()
+            .and_then(|v| v.duration_since(UNIX_EPOCH).ok())
+            .map(|v| v.as_secs()),
+        metadata_pending: false,
+        extension: path
+            .extension()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default(),
+    })
+}
+
+fn directory_entry_basic(entry: &fs::DirEntry) -> Option<FileEntry> {
+    let kind = entry.file_type().ok()?;
+    if kind.is_symlink() {
+        return directory_entry(entry);
+    }
+    let path = entry.path();
+    let name = entry.file_name().to_string_lossy().to_string();
+    Some(FileEntry {
+        hidden: name.starts_with('.'),
+        name,
+        path: display(&path),
+        is_dir: kind.is_dir(),
+        is_symlink: false,
+        size: 0,
+        modified: None,
+        metadata_pending: true,
+        extension: path
+            .extension()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default(),
+    })
+}
+
+pub fn read_entry_details(directory: &str, names: Vec<String>) -> Result<Vec<FileEntry>> {
+    if names.len() > 64 {
+        return Err("一次读取的项目过多".into());
+    }
+    let directory = resolve_directory(directory)?;
+    let mut paths = Vec::with_capacity(names.len());
+    for name in names {
+        let mut parts = Path::new(&name).components();
+        if !matches!(parts.next(), Some(Component::Normal(_))) || parts.next().is_some() {
+            return Err("无效的项目名称".into());
+        }
+        paths.push(directory.join(name));
+    }
+    let chunk_size = paths.len().div_ceil(4).max(1);
+    Ok(std::thread::scope(|scope| {
+        let handles: Vec<_> = paths
+            .chunks(chunk_size)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .filter_map(|path| {
+                            let metadata = fs::symlink_metadata(path).ok()?;
+                            let target = if metadata.is_symlink() {
+                                fs::metadata(path).ok()
+                            } else {
+                                None
+                            };
+                            let effective = target.as_ref().unwrap_or(&metadata);
+                            let name = path.file_name()?.to_string_lossy().into_owned();
+                            Some(FileEntry {
+                                hidden: name.starts_with('.'),
+                                name,
+                                path: display(path),
+                                is_dir: effective.is_dir(),
+                                is_symlink: metadata.is_symlink(),
+                                size: if effective.is_dir() {
+                                    0
+                                } else {
+                                    effective.len()
+                                },
+                                modified: effective
+                                    .modified()
+                                    .ok()
+                                    .and_then(|v| v.duration_since(UNIX_EPOCH).ok())
+                                    .map(|v| v.as_secs()),
+                                metadata_pending: false,
+                                extension: path
+                                    .extension()
+                                    .map(|s| s.to_string_lossy().to_lowercase())
+                                    .unwrap_or_default(),
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("directory metadata worker panicked"))
+            .collect()
+    }))
 }
 
 pub fn validate_name(name: &str) -> Result<()> {
@@ -749,6 +913,69 @@ mod tests {
             .iter()
             .any(|e| e.name == "folder" && e.is_dir));
         assert!(read_directory(&display(&dir.path().join(".hidden"))).is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires PUDDING_TEST_SMB_DIRECTORY to point to an accessible SMB directory"]
+    fn reads_smb_directory_without_waiting_for_all_metadata() {
+        let path =
+            std::env::var("PUDDING_TEST_SMB_DIRECTORY").expect("set PUDDING_TEST_SMB_DIRECTORY");
+        let start = std::time::Instant::now();
+        let listing = read_directory(&path).unwrap();
+        eprintln!(
+            "SMB entries: {}, pending: {}, elapsed: {:?}",
+            listing.entries.len(),
+            listing
+                .entries
+                .iter()
+                .filter(|entry| entry.metadata_pending)
+                .count(),
+            start.elapsed()
+        );
+        assert!(
+            listing.entries.len() >= 128
+                && listing.entries.iter().any(|entry| entry.metadata_pending)
+        );
+        let names: std::collections::HashSet<_> =
+            listing.entries.iter().map(|entry| &entry.name).collect();
+        assert_eq!(names.len(), listing.entries.len());
+        let sample: Vec<_> = listing
+            .entries
+            .iter()
+            .filter(|entry| entry.metadata_pending)
+            .take(8)
+            .map(|entry| entry.name.clone())
+            .collect();
+        let details = read_entry_details(&listing.path, sample).unwrap();
+        assert!(details.iter().all(|entry| !entry.metadata_pending));
+    }
+
+    #[test]
+    fn large_directory_preserves_entries_and_metadata() {
+        let dir = tempdir().unwrap();
+        for index in 0..160 {
+            fs::write(dir.path().join(format!("item-{index:03}.txt")), b"test").unwrap();
+        }
+        fs::create_dir(dir.path().join("nested")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("missing", dir.path().join("broken-link")).unwrap();
+        let listing = read_directory(&display(dir.path())).unwrap();
+        assert_eq!(listing.entries.len(), if cfg!(unix) { 162 } else { 161 });
+        assert_eq!(listing.skipped, 0);
+        assert!(listing
+            .entries
+            .iter()
+            .any(|entry| entry.name == "item-070.txt" && entry.size == 4 && !entry.is_dir));
+        assert!(listing
+            .entries
+            .iter()
+            .any(|entry| entry.name == "nested" && entry.is_dir));
+        #[cfg(unix)]
+        assert!(listing
+            .entries
+            .iter()
+            .any(|entry| entry.name == "broken-link" && entry.is_symlink));
     }
 
     #[test]

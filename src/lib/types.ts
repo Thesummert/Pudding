@@ -7,6 +7,8 @@ export interface FileEntry {
   modified: number | null;
   hidden: boolean;
   extension: string;
+  metadataPending?: boolean;
+  metadataUnavailable?: boolean;
 }
 
 export interface DirectoryListing {

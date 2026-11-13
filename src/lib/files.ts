@@ -37,6 +37,10 @@ export function formatSize(bytes: number): string {
   return `${new Intl.NumberFormat('zh-CN', { maximumFractionDigits: unit > 0 ? 1 : 0 }).format(bytes / 1024 ** unit)} ${['B', 'KB', 'MB', 'GB', 'TB'][unit]}`;
 }
 
+export function formatEntrySize(entry: FileEntry): string {
+  return entry.metadataPending || entry.metadataUnavailable ? '—' : formatSize(entry.size);
+}
+
 export function formatDate(value: number | null): string {
   if (value === null) return '未知';
   return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(value * 1000);

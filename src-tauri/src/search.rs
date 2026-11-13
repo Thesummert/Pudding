@@ -69,7 +69,7 @@ pub fn search(
         let mut last_report = std::time::Instant::now();
         progress(0);
         while let Some((dir, parent_hidden)) = pending.pop() {
-            let Ok(listing) = filesystem::read_directory(&dir.to_string_lossy()) else {
+            let Ok(listing) = filesystem::read_directory_full(&dir.to_string_lossy()) else {
                 continue;
             };
             for mut entry in listing.entries {

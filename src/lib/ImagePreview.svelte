@@ -2,6 +2,7 @@
   import { CircleAlert, Link2, LoaderCircle } from '@lucide/svelte';
   import FileIcon from './FileIcon.svelte';
   import { api } from './api';
+  import { queueThumbnail } from './thumbnail-queue';
   import type { FileEntry } from './types';
 
   let { entry, actualSize = false, thumbnail = false, large = false, interactive = false }: { entry: FileEntry; actualSize?: boolean; thumbnail?: boolean; large?: boolean; interactive?: boolean } = $props();
@@ -87,7 +88,9 @@
     source = '';
     loaded = false;
     error = '';
-    void api.image(path, extension).then((result) => {
+    const load = () => api.image(path, extension);
+    void (thumbnail ? queueThumbnail(load, () => active) : load()).then((result) => {
+      if (!result) return;
       if (!active) { URL.revokeObjectURL(result); return; }
       url = result;
       source = result;

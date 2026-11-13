@@ -202,6 +202,14 @@ async fn read_directory(path: String) -> Result<filesystem::DirectoryListing, St
 }
 
 #[tauri::command]
+async fn read_entry_details(
+    directory: String,
+    names: Vec<String>,
+) -> Result<Vec<filesystem::FileEntry>, String> {
+    blocking(move || filesystem::read_entry_details(&directory, names)).await
+}
+
+#[tauri::command]
 async fn prepare_video_preview(app: tauri::AppHandle, path: String) -> Result<String, String> {
     let path = blocking(move || filesystem::video_preview_path(&path)).await?;
     app.asset_protocol_scope()
@@ -418,6 +426,7 @@ pub fn run() {
             open_directory_window,
             search_files,
             read_directory,
+            read_entry_details,
             directory_size,
             read_image,
             read_preview_file,

@@ -11,10 +11,11 @@
   import FilePreviewDialog from './lib/FilePreviewDialog.svelte';
   import FileInfoDialog from './lib/FileInfoDialog.svelte';
   import { api, desktop } from './lib/api';
-  import { basename, breadcrumbs, fileKind, formatDate, formatSize, isImage, isVideo, canPreview, visibleEntries } from './lib/files';
+  import { basename, breadcrumbs, fileKind, formatDate, formatSize, formatEntrySize, isImage, isVideo, canPreview, visibleEntries } from './lib/files';
   import type { AppInfo, Clipboard, DirectoryListing, FileEntry, SortKey, ViewMode } from './lib/types';
   import type { DragDropEvent } from '@tauri-apps/api/webview';
   import { dragClientPosition } from './lib/drag';
+  import { virtualWindow } from './lib/virtual-list';
 
   type Preferences = { view: ViewMode; hidden: boolean; inspector: boolean; size: number; dark: boolean; terminal: string; customTerminal: string };
   function loadPreferences(): Preferences {
@@ -48,13 +49,13 @@
   let folderDisplays = loadFolderDisplays();
   let view = $state<ViewMode>(preferences.view);
   let info = $state<AppInfo>();
-  let directory = $state<DirectoryListing>();
+  let directory = $state.raw<DirectoryListing>();
   let loading = $state(true);
   let operating = $state(false);
   let initialError = $state('');
   let query = $state('');
   let searchContent = $state(false);
-  let searchResults = $state<FileEntry[] | null>(null);
+  let searchResults = $state.raw<FileEntry[] | null>(null);
   let searchVersion = $state(0);
   let searching = $state(false);
   let scanned = $state(0);
@@ -89,6 +90,19 @@
   let addressInput = $state<HTMLInputElement>();
   let searchInput: HTMLInputElement;
   let fileArea: HTMLDivElement;
+  let viewport = $state({ width: 0, height: 0, scrollTop: 0, topPadding: 0 });
+  function trackFileArea(node: HTMLDivElement) {
+    const measure = () => {
+      const style = getComputedStyle(node);
+      viewport = { width: Math.max(0, node.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0)), height: node.clientHeight, scrollTop: node.scrollTop, topPadding: parseFloat(style.paddingTop) || 0 };
+    };
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(node);
+    node.addEventListener('scroll', measure, { passive: true });
+    measure();
+    return { destroy() { observer?.disconnect(); node.removeEventListener('scroll', measure); } };
+  }
+
   let request = 0;
   let notice = $state<{ text: string; error: boolean } | null>(null);
   let noticeTimeout: ReturnType<typeof setTimeout>;
@@ -136,6 +150,8 @@
   const shortcutModifier = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
 
   let entries = $derived(visibleEntries(query.trim() && searchResults !== null ? searchResults : directory?.entries ?? [], query.trim() && searchResults !== null ? '' : query, preferences.hidden, sort, descending));
+  let windowed = $derived(virtualWindow(entries.length, view, preferences.size, viewport.width, viewport.height, viewport.scrollTop, viewport.topPadding));
+  let renderedEntries = $derived(entries.slice(windowed.start, windowed.end));
   let selectedEntries = $derived(entries.filter((entry) => selected.has(entry.path)));
   let focused = $derived(selectedEntries.length === 1 ? selectedEntries[0] : undefined);
   let pinPath = $derived(selected.size === 0 ? directory?.path : focused?.isDir ? focused.path : undefined);
@@ -146,8 +162,33 @@
   let fileCount = $derived(entries.length - folderCount);
   let crumbs = $derived(directory ? breadcrumbs(directory.path) : []);
   let busy = $derived(loading || operating);
+  let selectedSizeKnown = $derived(selectedEntries.every((entry) => !entry.metadataPending && !entry.metadataUnavailable));
   let selectedSize = $derived(selectedEntries.reduce((total, entry) => total + (entry.isDir ? 0 : entry.size), 0));
   let inspectorEntry = $derived(focused ?? { name: title, path: directory?.path ?? '', isDir: true, isSymlink: false, size: 0, modified: null, hidden: false, extension: '' });
+
+  let metadataRequest = $state<{ path: string; id: number } | null>(null);
+  let nextMetadataRequest = 0;
+  $effect(() => {
+    const current = directory;
+    const all = sort === 'size' || sort === 'modified';
+    const candidates = all ? [...renderedEntries, ...entries] : renderedEntries;
+    if (!current || metadataRequest?.path === current.path) return;
+    const seen = new Set<string>();
+    const pending = candidates.filter((entry) => entry.metadataPending && !seen.has(entry.path) && !!seen.add(entry.path)).slice(0, 32);
+    if (!pending.length) return;
+    const id = ++nextMetadataRequest;
+    metadataRequest = { path: current.path, id };
+    void api.readEntryDetails(current.path, pending.map((entry) => entry.name)).then((details) => {
+      if (directory !== current) return;
+      const found = new Map(details.map((entry) => [entry.path, entry]));
+      const requested = new Set(pending.map((entry) => entry.path));
+      directory = { ...current, entries: current.entries.map((entry) => found.get(entry.path) ?? (requested.has(entry.path) ? { ...entry, metadataPending: false, metadataUnavailable: true } : entry)) };
+    }).catch(() => {
+      if (directory !== current) return;
+      const requested = new Set(pending.map((entry) => entry.path));
+      directory = { ...current, entries: current.entries.map((entry) => requested.has(entry.path) ? { ...entry, metadataPending: false, metadataUnavailable: true } : entry) };
+    }).finally(() => { if (metadataRequest?.id === id) metadataRequest = null; });
+  });
 
   $effect(() => {
     try { localStorage.setItem('pudding.preferences', JSON.stringify(preferences)); } catch { /* Optional persistence. */ }
@@ -286,7 +327,7 @@
         historyIndex = history.length - 1;
       }
       tabs = tabs.map((tab) => tab.id === activeTab ? { ...tab, path: result.path, history: [...history], historyIndex } : tab);
-      if (fileArea && !refresh) fileArea.scrollTop = 0;
+      if (fileArea && !refresh) { fileArea.scrollTop = 0; viewport.scrollTop = 0; }
     } catch (error) {
       if (id !== request) return;
       if (!directory) initialError = errorMessage(error);
@@ -816,12 +857,19 @@
     else if (key === 'enter' && focused && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); void openEntry(focused); }
     else if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key) && entries.length && (target.closest('.file-area') || target === document.body)) {
       event.preventDefault();
-      const columns = view === 'list' ? 1 : Math.max(1, Math.floor((fileArea.clientWidth - 48 + 12) / (preferences.size + 12)));
+      const columns = windowed.columns;
       const offset = key === 'arrowleft' ? -1 : key === 'arrowright' ? 1 : key === 'arrowup' ? -columns : columns;
       const index = entries.findIndex((e) => e.path === anchor);
       const next = index < 0 ? 0 : Math.min(entries.length - 1, Math.max(0, index + offset));
       anchor = entries[next].path;
       selected = new Set([anchor]);
+      if (entries.length > 300 && viewport.height > 0) {
+        const top = windowed.top + Math.floor(next / columns) * windowed.rowStep;
+        const bottom = top + windowed.rowStep;
+        if (top < fileArea.scrollTop + (view === 'list' ? 37 : 0)) fileArea.scrollTop = Math.max(0, top - (view === 'list' ? 37 : 0));
+        else if (bottom > fileArea.scrollTop + fileArea.clientHeight) fileArea.scrollTop = bottom - fileArea.clientHeight;
+        viewport.scrollTop = fileArea.scrollTop;
+      }
       void tick().then(() => fileArea.querySelector<HTMLButtonElement>(`[data-index="${next}"]`)?.focus());
     }
   }
@@ -931,7 +979,7 @@
 
           {#if dropTarget}<div class="drop-hint" role="status">松开后选择复制或移动到「{basename(dropTarget) || dropTarget}」 · Ctrl 复制 · Shift 移动</div>{/if}
 
-          <div class="file-area" data-drop-path={directory?.path} class:drop-target={dropRegion === 'browser' && dropTarget === directory?.path} class:loading class:list-view={view === 'list'} bind:this={fileArea} role="group" aria-label="文件和文件夹" aria-busy={busy} onpointerdown={beginMarquee} oncontextmenu={(event) => contextMenu(event)}>
+          <div class="file-area" data-drop-path={directory?.path} class:drop-target={dropRegion === 'browser' && dropTarget === directory?.path} class:loading class:list-view={view === 'list'} bind:this={fileArea} use:trackFileArea role="group" aria-label="文件和文件夹" aria-busy={busy} onpointerdown={beginMarquee} oncontextmenu={(event) => contextMenu(event)}>
             {#if initialError}
               <div class="empty-state"><span class="empty-icon error"><CircleAlert size={34} strokeWidth={1.3} /></span><h2>暂时无法打开文件夹</h2><p>{initialError}</p><button class="button" onclick={() => info ? navigate(info.home) : initialize()}><RotateCw size={15} />重新尝试</button></div>
             {:else if !directory && loading}
@@ -940,27 +988,33 @@
               <div class="empty-state"><span class="empty-icon">{#if query}<Search size={34} strokeWidth={1.3} />{:else}<Folder size={38} strokeWidth={1.2} />{/if}</span><h2>{query ? '没有找到匹配的项目' : '文件夹为空'}</h2><p>{query ? (searchContent ? '试试其他文件名或文本内容。' : '试试其他文件名。') : '可以创建一个文件夹。'}</p>{#if query}<button class="button" onclick={() => query = ''}>清除搜索</button>{:else}<button class="button" onclick={() => openDialog('create')} disabled={busy}><FolderPlus size={16} />新建文件夹</button>{/if}</div>
             {:else if view === 'grid'}
               <div class="file-grid" style={`--cell-size: ${preferences.size}px`}>
-                {#each entries as entry, index (entry.path)}
-                  <button class="file-card" draggable={!desktop && !busy} onpointerdown={(event) => beginDrag(event, entry)} ondragstart={(event) => demoDragStart(event, entry)} data-drop-path={entry.isDir ? entry.path : undefined} class:drop-target={dropRegion === 'browser' && dropTarget === entry.path} class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} title={`${entry.name}\n${entry.isDir ? '文件夹' : formatSize(entry.size)}\n双击打开`} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
+                {#if windowed.before}<div class="virtual-grid-spacer" style={`height: ${windowed.before}px`} aria-hidden="true"></div>{/if}
+                {#each renderedEntries as entry, localIndex (entry.path)}
+                  {@const index = windowed.start + localIndex}
+                  <button class="file-card" draggable={!desktop && !busy} onpointerdown={(event) => beginDrag(event, entry)} ondragstart={(event) => demoDragStart(event, entry)} data-drop-path={entry.isDir ? entry.path : undefined} class:drop-target={dropRegion === 'browser' && dropTarget === entry.path} class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} title={`${entry.name}\n${entry.isDir ? '文件夹' : formatEntrySize(entry)}\n双击打开`} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
                     {#if selected.has(entry.path)}<span class="selected-check"><Check size={10} strokeWidth={3} /></span>{/if}
-                    <span class="file-visual">{#if isImage(entry) || isVideo(entry)}<FileThumbnail {entry} large />{:else}<FileIcon {entry} large />{/if}</span>
-                    <span class="file-name">{entry.name}</span><span class="file-caption">{entry.isDir ? folderLabels[entry.name] ?? '文件夹' : formatSize(entry.size)}</span>
+                    <span class="file-visual">{#if !entry.metadataPending && (isImage(entry) || isVideo(entry))}<FileThumbnail {entry} large />{:else}<FileIcon {entry} large />{/if}</span>
+                    <span class="file-name">{entry.name}</span><span class="file-caption">{entry.isDir ? folderLabels[entry.name] ?? '文件夹' : formatEntrySize(entry)}</span>
                   </button>
                 {/each}
+                {#if windowed.after}<div class="virtual-grid-spacer" style={`height: ${windowed.after}px`} aria-hidden="true"></div>{/if}
               </div>
             {:else}
               <div class="list-header"><button onclick={() => setSort('name')}>名称{#if sort === 'name'}{#if descending}<ChevronDown size={13} />{:else}<ArrowUp size={12} />{/if}{/if}</button><button onclick={() => setSort('modified')}>修改时间</button><button onclick={() => setSort('type')}>类型</button><button onclick={() => setSort('size')}>大小</button></div>
               <div class="file-list">
-                {#each entries as entry, index (entry.path)}
+                {#if windowed.before}<div style={`height: ${windowed.before}px`} aria-hidden="true"></div>{/if}
+                {#each renderedEntries as entry, localIndex (entry.path)}
+                  {@const index = windowed.start + localIndex}
                   <button class="file-row" draggable={!desktop && !busy} onpointerdown={(event) => beginDrag(event, entry)} ondragstart={(event) => demoDragStart(event, entry)} data-drop-path={entry.isDir ? entry.path : undefined} class:drop-target={dropRegion === 'browser' && dropTarget === entry.path} class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
-                    <span class="row-name">{#if isImage(entry) || isVideo(entry)}<FileThumbnail {entry} />{:else}<FileIcon {entry} />{/if}<span>{entry.name}</span></span><span class="row-date">{formatDate(entry.modified)}</span><span class="row-type">{fileKind(entry)}</span><span class="row-size">{entry.isDir ? '—' : formatSize(entry.size)}</span>
+                    <span class="row-name">{#if !entry.metadataPending && (isImage(entry) || isVideo(entry))}<FileThumbnail {entry} />{:else}<FileIcon {entry} />{/if}<span>{entry.name}</span></span><span class="row-date">{formatDate(entry.modified)}</span><span class="row-type">{fileKind(entry)}</span><span class="row-size">{entry.isDir ? '—' : formatEntrySize(entry)}</span>
                   </button>
                 {/each}
+                {#if windowed.after}<div style={`height: ${windowed.after}px`} aria-hidden="true"></div>{/if}
               </div>
             {/if}
           </div>
 
-          <div class="browser-bottom"><span><span class="small-status-dot"></span>{query ? `筛选出 ${entries.length} 个项目` : `${entries.length} 个项目`}{#if selected.size}<span class="summary-separator">·</span>已选择 {selected.size} 项{#if selectedSize > 0}，{formatSize(selectedSize)}{/if}{/if}</span><span class="zoom-controls">{#if view === 'grid'}<LayoutGrid size={12} /><input type="range" aria-label="图标大小" min="104" max="168" step="1" value={preferences.size} oninput={(event) => preferences.size = Number(event.currentTarget.value)} /><LayoutGrid size={16} />{:else}<List size={13} /><span>详细列表</span>{/if}</span></div>
+          <div class="browser-bottom"><span><span class="small-status-dot"></span>{query ? `筛选出 ${entries.length} 个项目` : `${entries.length} 个项目`}{#if selected.size}<span class="summary-separator">·</span>已选择 {selected.size} 项{#if selectedSizeKnown && selectedSize > 0}，{formatSize(selectedSize)}{/if}{/if}</span><span class="zoom-controls">{#if view === 'grid'}<LayoutGrid size={12} /><input type="range" aria-label="图标大小" min="104" max="168" step="1" value={preferences.size} oninput={(event) => preferences.size = Number(event.currentTarget.value)} /><LayoutGrid size={16} />{:else}<List size={13} /><span>详细列表</span>{/if}</span></div>
         </section>
 
         {#if preferences.inspector}
@@ -973,14 +1027,14 @@
             {/if}
             <div class="inspector-name"><h2>{selected.size > 1 ? `${selected.size} 个项目` : focused?.name ?? title}</h2><span class="type-badge">{selected.size > 1 ? '多项选择' : focused ? fileKind(focused) : '当前文件夹'}</span></div>
             <div class="inspector-divider"></div>
-            <dl class="properties"><div><dt>位置</dt><dd class="path-value" title={focused?.path ?? directory?.path}>{selected.size > 1 ? directory?.path : focused?.path ?? directory?.path ?? '—'}</dd></div>{#if focused}<div><dt>类型</dt><dd>{fileKind(focused)}</dd></div>{#if !focused.isDir}<div><dt>大小</dt><dd>{formatSize(focused.size)}</dd></div>{/if}<div><dt>修改时间</dt><dd>{formatDate(focused.modified)}</dd></div>{:else if selected.size > 1}<div><dt>已选项目</dt><dd>{selected.size} 项</dd></div><div><dt>文件大小</dt><dd>{formatSize(selectedSize)}</dd></div>{:else}<div><dt>内容</dt><dd>{directory?.entries.filter((e) => preferences.hidden || !e.hidden).length ?? 0} 个项目</dd></div><div><dt>文件夹</dt><dd>{directory?.entries.filter((e) => e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div><div><dt>文件</dt><dd>{directory?.entries.filter((e) => !e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div>{/if}</dl>
+            <dl class="properties"><div><dt>位置</dt><dd class="path-value" title={focused?.path ?? directory?.path}>{selected.size > 1 ? directory?.path : focused?.path ?? directory?.path ?? '—'}</dd></div>{#if focused}<div><dt>类型</dt><dd>{fileKind(focused)}</dd></div>{#if !focused.isDir}<div><dt>大小</dt><dd>{formatEntrySize(focused)}</dd></div>{/if}<div><dt>修改时间</dt><dd>{formatDate(focused.modified)}</dd></div>{:else if selected.size > 1}<div><dt>已选项目</dt><dd>{selected.size} 项</dd></div><div><dt>文件大小</dt><dd>{formatSize(selectedSize)}</dd></div>{:else}<div><dt>内容</dt><dd>{directory?.entries.filter((e) => preferences.hidden || !e.hidden).length ?? 0} 个项目</dd></div><div><dt>文件夹</dt><dd>{directory?.entries.filter((e) => e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div><div><dt>文件</dt><dd>{directory?.entries.filter((e) => !e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div>{/if}</dl>
             {#if focused}<button class="button inspector-open" onclick={() => focused!.isDir ? openEntry(focused!) : openExternal(focused!)} disabled={busy}><ExternalLink size={15} />{focused.isDir ? '打开文件夹' : '使用默认应用打开'}<ArrowRight size={14} /></button>{/if}
             <div class="inspector-tip"><span class="tip-label"><Info size={14} />小提示</span><p>{selected.size ? `按住 ${shortcutModifier} 点选多个项目，按 Shift 连续选择，或拖动空白处框选。` : '单击查看文件信息，双击打开。也可以在地址栏中输入路径。'}</p></div>
           </aside>
         {/if}
       </div>
 
-      <footer class="status-bar"><span>{#if operating}<LoaderCircle size={12} class="spin" />正在处理文件…{:else if loading}<LoaderCircle size={12} class="spin" />正在读取…{:else if searching}<LoaderCircle size={12} class="spin" />正在搜索，已扫描 {scanned} 个项目…{:else}<span class="status-dot"></span>一切就绪{/if}{#if directory?.skipped}<span class="skipped-label">已跳过 {directory.skipped} 个无法读取的项目</span>{/if}</span><span>{#if !desktop}浏览器演示 · 示例数据仅保存在本次会话{:else}{info?.platform === 'macos' ? 'macOS' : info?.platform === 'windows' ? 'Windows' : 'Linux'} · 本地文件系统{/if}<span class="status-divider"></span><kbd>{shortcutModifier} L</kbd> 输入路径</span></footer>
+      <footer class="status-bar"><span>{#if operating}<LoaderCircle size={12} class="spin" />正在处理文件…{:else if loading}<LoaderCircle size={12} class="spin" />正在读取…{:else if searching}<LoaderCircle size={12} class="spin" />正在搜索，已扫描 {scanned} 个项目…{:else}<span class="status-dot"></span>一切就绪{/if}{#if metadataRequest && directory?.path === metadataRequest.path}<span class="skipped-label">正在读取文件信息…</span>{/if}{#if directory?.skipped}<span class="skipped-label">已跳过 {directory.skipped} 个无法读取的项目</span>{/if}</span><span>{#if !desktop}浏览器演示 · 示例数据仅保存在本次会话{:else}{info?.platform === 'macos' ? 'macOS' : info?.platform === 'windows' ? 'Windows' : 'Linux'} · 本地文件系统{/if}<span class="status-divider"></span><kbd>{shortcutModifier} L</kbd> 输入路径</span></footer>
     </main>
   </div>
 

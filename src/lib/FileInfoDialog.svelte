@@ -3,7 +3,7 @@
   import { X } from '@lucide/svelte';
   import FileIcon from './FileIcon.svelte';
   import { api } from './api';
-  import { fileKind, formatDate, formatSize } from './files';
+  import { fileKind, formatDate, formatSize, formatEntrySize } from './files';
   import type { FileEntry } from './types';
 
   let { entry, onclose }: { entry: FileEntry; onclose: () => void } = $props();
@@ -32,7 +32,7 @@
   <p>基本信息</p>
   <dl class="info-preview-properties">
     <div><dt>类型</dt><dd>{fileKind(entry)}</dd></div>
-    <div><dt>大小</dt><dd>{entry.isDir ? (sizeError ? '无法计算' : folderSize === null ? '正在计算…' : formatSize(folderSize)) : formatSize(entry.size)}</dd></div>
+    <div><dt>大小</dt><dd>{entry.isDir ? (sizeError ? '无法计算' : folderSize === null ? '正在计算…' : formatSize(folderSize)) : formatEntrySize(entry)}</dd></div>
     <div><dt>修改时间</dt><dd>{formatDate(entry.modified)}</dd></div>
     <div><dt>位置</dt><dd>{entry.path}</dd></div>
   </dl>

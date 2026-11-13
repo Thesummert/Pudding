@@ -241,3 +241,27 @@ test('Space opens a real video and closes it from the player', async ({ page }) 
   await page.keyboard.press('Space');
   await expect(page.locator('.file-preview-modal')).toHaveCount(0);
 });
+
+test('large directories stay scrollable in grid and list views', async ({ page }) => {
+  test.skip(!!process.env.PUDDING_E2E_FILE, 'requires the development demo module');
+  await page.evaluate(async () => {
+    const modulePath = '/src/lib/demo.ts';
+    const { demoInvoke } = await import(/* @vite-ignore */ modulePath);
+    for (let i = 0; i < 600; i++) {
+      await demoInvoke('create_folder', { parent: '/home/pudding', name: `大型目录 ${String(i).padStart(4, '0')}` });
+    }
+  });
+  await page.getByRole('button', { name: '刷新', exact: true }).click();
+  await expect(page.locator('.browser-bottom')).toContainText('610 个项目');
+  const area = page.locator('.file-area');
+  expect(await page.locator('.file-card').count()).toBeLessThan(100);
+  await area.evaluate((node) => { node.scrollTop = node.scrollHeight; });
+  await expect(page.getByRole('button', { name: '大型目录 0599', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '列表视图', exact: true }).click();
+  await area.evaluate((node) => { node.scrollTop = node.scrollHeight; });
+  await expect(page.getByRole('button', { name: '大型目录 0599', exact: true })).toBeVisible();
+  expect(await page.locator('.file-row').count()).toBeLessThan(50);
+  await page.getByRole('button', { name: '大型目录 0599', exact: true }).click();
+  await page.keyboard.press('ArrowUp');
+  await expect(page.getByRole('button', { name: '大型目录 0598', exact: true })).toHaveAttribute('aria-pressed', 'true');
+});
