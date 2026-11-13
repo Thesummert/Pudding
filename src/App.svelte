@@ -752,9 +752,10 @@
     }
   }
 
-  async function copyPath() {
+  async function copyPath(scope: 'selection' | 'directory') {
     context = null;
-    const path = selectedEntries.length ? selectedEntries.map((e) => e.path).join('\n') : directory?.path;
+    optionsOpen = false;
+    const path = scope === 'selection' ? selectedEntries.map((e) => e.path).join('\n') : directory?.path;
     if (!path) return;
     try { await api.writeText(path); await syncClipboard(); notify('路径已复制到剪贴板'); }
     catch { notify('无法访问系统剪贴板，可在地址栏中手动复制路径。', true); }
@@ -970,7 +971,7 @@
               <div class="view-switch" aria-label="显示方式"><button class:active={view === 'grid'} title="图标视图" aria-label="图标视图" aria-pressed={view === 'grid'} onclick={() => setView('grid')}><LayoutGrid size={16} /></button><button class:active={view === 'list'} title="列表视图" aria-label="列表视图" aria-pressed={view === 'list'} onclick={() => setView('list')}><List size={17} /></button></div>
               <button class="icon-button compact inspector-toggle" class:active={preferences.inspector} title="信息面板" aria-label="信息面板" aria-pressed={preferences.inspector} onclick={() => preferences.inspector = !preferences.inspector}><PanelRight size={17} /></button>
               <div class="options-container"><button class="icon-button compact" title="更多显示选项" aria-label="更多显示选项" aria-expanded={optionsOpen} onclick={(event) => { event.stopPropagation(); optionsOpen = !optionsOpen; context = null; }}><MoreHorizontal size={19} /></button>
-                {#if optionsOpen}<div class="dropdown-menu" role="menu"><button role="menuitemcheckbox" aria-checked={preferences.hidden} onclick={() => preferences.hidden = !preferences.hidden}>{#if preferences.hidden}<Eye size={16} />{:else}<EyeOff size={16} />{/if}<span>显示隐藏文件</span>{#if preferences.hidden}<Check size={14} />{/if}</button><button role="menuitem" onclick={copyPath}><Link2 size={16} /><span>复制当前路径</span></button><button role="menuitem" onclick={refresh} disabled={busy}><RotateCw size={16} /><span>刷新文件夹</span><kbd>F5</kbd></button></div>{/if}
+                {#if optionsOpen}<div class="dropdown-menu" role="menu"><button role="menuitemcheckbox" aria-checked={preferences.hidden} onclick={() => preferences.hidden = !preferences.hidden}>{#if preferences.hidden}<Eye size={16} />{:else}<EyeOff size={16} />{/if}<span>显示隐藏文件</span>{#if preferences.hidden}<Check size={14} />{/if}</button><button role="menuitem" onclick={() => copyPath('directory')}><Link2 size={16} /><span>复制当前路径</span></button><button role="menuitem" onclick={refresh} disabled={busy}><RotateCw size={16} /><span>刷新文件夹</span><kbd>F5</kbd></button></div>{/if}
               </div>
             </div>
           </div>
@@ -1065,12 +1066,12 @@
         <button role="menuitem" onclick={() => void runSugar('custom')}><ExternalLink size={16} /><span>使用 Sugar 自定义压缩…</span></button>
       </div>{/if}
     {/if}
-    {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{shortcutModifier} C</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{shortcutModifier} X</kbd></button>{/if}
+    {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{shortcutModifier} C</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{shortcutModifier} X</kbd></button><button role="menuitem" onclick={() => copyPath('selection')}><Link2 size={16} /><span>{selected.size > 1 ? '复制项目地址' : focused?.isDir ? '复制文件夹地址' : '复制文件地址'}</span></button>{/if}
     <button role="menuitem" onclick={paste} disabled={busy || (!desktop && !clipboard)}><ClipboardPaste size={16} /><span>粘贴</span><kbd>{shortcutModifier} V</kbd></button>
     <div class="menu-divider"></div>
     <button role="menuitem" onclick={() => openDialog('create')}><FolderPlus size={16} /><span>新建文件夹</span></button>
     {#if selected.size === 1}<button role="menuitem" onclick={() => openDialog('rename')}><Pencil size={16} /><span>重命名</span><kbd>F2</kbd></button>{/if}
-    <button role="menuitem" onclick={copyPath}><Link2 size={16} /><span>复制路径</span></button>
+    {#if !selected.size}<button role="menuitem" onclick={() => copyPath('directory')}><Link2 size={16} /><span>复制当前文件夹地址</span></button>{/if}
     {#if selected.size}<div class="menu-divider"></div><button role="menuitem" class="danger-text" onclick={(event) => confirmTrash(shiftHeld || event.shiftKey)}><Trash2 size={16} /><span>{shiftHeld ? '永久删除' : '移入回收站'}</span><kbd>{shiftHeld ? 'Shift Del' : 'Del'}</kbd></button>{/if}
   </div>{/key}{/if}
 

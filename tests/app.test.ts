@@ -272,6 +272,34 @@ describe('file manager interactions', () => {
     await vi.waitFor(() => expect(details.mock.calls.length).toBeGreaterThan(1));
   });
 
+  it('copies file, folder, multi-selection and current folder addresses as text', async () => {
+    const write = vi.spyOn(api, 'writeText').mockResolvedValue();
+    await contextMenu('开始使用.md');
+    await click(menuItem('复制文件地址'));
+    await vi.waitFor(() => expect(write).toHaveBeenLastCalledWith('/home/pudding/开始使用.md'));
+    await contextMenu('Documents');
+    await click(menuItem('复制文件夹地址'));
+    await vi.waitFor(() => expect(write).toHaveBeenLastCalledWith('/home/pudding/Documents'));
+    await click(button('开始使用.md'));
+    button('灵感笔记.txt').dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    await tick();
+    await contextMenu('灵感笔记.txt');
+    await click(menuItem('复制项目地址'));
+    await vi.waitFor(() => expect(write).toHaveBeenLastCalledWith('/home/pudding/开始使用.md\n/home/pudding/灵感笔记.txt'));
+    await click(button('开始使用.md'));
+    await click(button('更多显示选项'));
+    await click(menuItem('复制当前路径'));
+    await vi.waitFor(() => expect(write).toHaveBeenLastCalledWith('/home/pudding'));
+    host.querySelector('.file-area')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await tick();
+    await click(menuItem('复制当前文件夹地址'));
+    await vi.waitFor(() => expect(write).toHaveBeenLastCalledWith('/home/pudding'));
+    write.mockRejectedValueOnce(new Error('clipboard unavailable'));
+    await contextMenu('开始使用.md');
+    await click(menuItem('复制文件地址'));
+    await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain('无法访问系统剪贴板'));
+  });
+
   it('reads fresh clipboard contents at paste time and reports failed clipboard writes', async () => {
     await contextMenu('开始使用.md');
     vi.spyOn(api, 'writeClipboard').mockRejectedValueOnce(new Error('系统剪贴板不可用'));
