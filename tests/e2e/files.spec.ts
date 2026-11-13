@@ -71,7 +71,8 @@ test('copy and cut between folders without overwriting existing files', async ({
   const copy = page.getByRole('button', { name: '开始使用.md', exact: true });
   await expect(copy).toBeVisible();
   await page.getByRole('button', { name: '粘贴到此处', exact: false }).click();
-  await expect(page.getByRole('alert')).toContainText('同名');
+  await expect(page.getByRole('dialog')).toContainText('同名');
+  await page.getByRole('dialog').getByRole('button', { name: '取消' }).click();
   await copy.click({ button: 'right' });
   await page.getByRole('menuitem', { name: /剪切/ }).click();
   await page.getByRole('navigation', { name: '常用位置' }).getByRole('button', { name: '下载', exact: true }).click();

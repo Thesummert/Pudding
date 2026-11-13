@@ -239,8 +239,27 @@ async fn transfer_entries(
     paths: Vec<String>,
     destination: String,
     mode: String,
+    policy: Option<String>,
+    confirmed: Option<Vec<String>>,
 ) -> Result<Vec<String>, String> {
-    blocking(move || filesystem::transfer_entries(paths, &destination, &mode)).await
+    blocking(move || {
+        filesystem::transfer_entries_with_policy(
+            paths,
+            &destination,
+            &mode,
+            policy.as_deref().unwrap_or("reject"),
+            confirmed.unwrap_or_default(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn transfer_conflicts(
+    paths: Vec<String>,
+    destination: String,
+) -> Result<Vec<String>, String> {
+    blocking(move || filesystem::transfer_conflicts(paths, &destination)).await
 }
 
 #[tauri::command]
@@ -406,6 +425,7 @@ pub fn run() {
             create_folder,
             rename_entry,
             transfer_entries,
+            transfer_conflicts,
             trash_entries,
             delete_entries,
             open_entry,

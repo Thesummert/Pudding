@@ -4,6 +4,7 @@
   import FileIcon from './lib/FileIcon.svelte';
   import FileThumbnail from './lib/FileThumbnail.svelte';
   import NameDialog from './lib/NameDialog.svelte';
+  import ConflictDialog from './lib/ConflictDialog.svelte';
   import OpenWithDialog from './lib/OpenWithDialog.svelte';
   import ImagePreview from './lib/ImagePreview.svelte';
   import ImagePreviewDialog from './lib/ImagePreviewDialog.svelte';
@@ -93,6 +94,17 @@
   let noticeTimeout: ReturnType<typeof setTimeout>;
   let dialog = $state<{ mode: 'create' | 'rename'; entry?: FileEntry } | null>(null);
   let dialogError = $state('');
+  let transferConflict = $state<{ paths: string[]; resolve: (choice: 'replace' | 'keep' | 'cancel') => void } | null>(null);
+
+  async function transferWithConflicts(paths: string[], destination: string, mode: 'copy' | 'cut', onstart: () => void = () => {}): Promise<string[] | null> {
+    const conflicts = await api.transferConflicts(paths, destination);
+    if (!conflicts.length) { onstart(); return api.transfer(paths, destination, mode); }
+    const choice = await new Promise<'replace' | 'keep' | 'cancel'>((resolve) => { transferConflict = { paths: conflicts, resolve }; });
+    transferConflict = null;
+    if (choice === 'cancel') return null;
+    onstart();
+    return api.transfer(paths, destination, mode, choice, conflicts);
+  }
   let openWithEntry = $state<FileEntry | null>(null);
   let trashDialog: HTMLDialogElement;
   let permanentDelete = $state(false);
@@ -515,18 +527,21 @@
     operating = true;
     const destination = directory.path;
     let paths: string[] = [];
+    let started = false;
     try {
       // Read at paste time so external changes never use stale paths.
       const operation = await api.readClipboard();
       clipboard = operation;
       if (!operation) { notify('剪贴板中没有可粘贴的文件'); return; }
       try {
-        paths = await api.transfer([...operation.paths], destination, operation.mode);
+        const result = await transferWithConflicts([...operation.paths], destination, operation.mode, () => { started = true; });
+        if (result === null) return;
+        paths = result;
         notify(`已${operation.mode === 'cut' ? '移动' : '复制'} ${paths.length} 个项目`);
       } finally {
         // A batch may partially succeed. Clear stale cut paths only if the
         // clipboard has not been replaced by another application.
-        if (operation.mode === 'cut') await api.clearClipboard(operation);
+        if (operation.mode === 'cut' && started) await api.clearClipboard(operation);
       }
     } catch (error) {
       notify(errorMessage(error), true);
@@ -580,7 +595,9 @@
     operating = true;
     let paths: string[] = [];
     try {
-      paths = await api.transfer(sources, destination, mode);
+      const result = await transferWithConflicts(sources, destination, mode);
+      if (result === null) return;
+      paths = result;
       notify(`已${mode === 'cut' ? '移动' : '复制'} ${paths.length} 个项目到「${basename(destination) || destination}」`);
     } catch (error) { notify(errorMessage(error), true); }
     finally {
@@ -1003,6 +1020,7 @@
     {#if selected.size}<div class="menu-divider"></div><button role="menuitem" class="danger-text" onclick={(event) => confirmTrash(shiftHeld || event.shiftKey)}><Trash2 size={16} /><span>{shiftHeld ? '永久删除' : '移入回收站'}</span><kbd>{shiftHeld ? 'Shift Del' : 'Del'}</kbd></button>{/if}
   </div>{/key}{/if}
 
+  {#if transferConflict}<ConflictDialog conflicts={transferConflict.paths} onchoose={(choice) => transferConflict?.resolve(choice)} />{/if}
   {#if openWithEntry}<OpenWithDialog entry={openWithEntry} onclose={() => openWithEntry = null} />{/if}
   {#if dialog}<NameDialog mode={dialog.mode} initial={dialog.mode === 'rename' ? dialog.entry?.name : ''} busy={operating} error={dialogError} onsubmit={submitName} onclose={() => { if (!operating) dialog = null; }} />{/if}
   {#if preview}{#if isImage(preview)}<ImagePreviewDialog entries={entries.filter(isImage)} initial={preview} onclose={() => preview = null} onopen={openExternal} />{:else if canPreview(preview)}<FilePreviewDialog entry={preview} onclose={() => preview = null} onopen={openExternal} />{:else}<FileInfoDialog entry={preview} onclose={() => preview = null} />{/if}{/if}

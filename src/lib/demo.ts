@@ -126,22 +126,48 @@ export async function demoInvoke<T>(command: string, args: Record<string, unknow
       remove(oldPath);
     }
     result = path;
-  } else if (command === 'transfer_entries') {
+  } else if (command === 'transfer_conflicts' || command === 'transfer_entries') {
     const paths = args.paths as string[];
     const target = String(args.destination);
     const entries = getFolder(target);
+    const targets: string[] = [];
+    const conflicts: string[] = [];
     for (const path of paths) {
       if (target === path || target.startsWith(`${path}/`)) throw new Error('不能将文件夹放入其自身或子文件夹。');
-      if (entries.some((e) => e.name === basename(path))) throw new Error('目标中已存在同名项目。');
+      find(path);
+      const destination = `${target === '/' ? '' : target}/${basename(path)}`;
+      if (entries.some((e) => e.path === destination) || targets.includes(destination)) conflicts.push(destination);
+      targets.push(destination);
     }
-    result = paths.map((path) => {
-      const item = find(path);
-      const destination = `${target === '/' ? '' : target}/${item.name}`;
-      cloneTree(path, destination);
-      entries.push({ ...item, path: destination });
-      if (args.mode === 'cut') remove(path);
-      return destination;
-    });
+    if (command === 'transfer_conflicts') result = conflicts;
+    else {
+      const policy = String(args.policy ?? 'reject');
+      const confirmed = (args.confirmed ?? []) as string[];
+      const reserved: string[] = [];
+      const plan = paths.map((path, index) => {
+        const item = find(path);
+        let destination = targets[index];
+        if (entries.some((e) => e.path === destination) || reserved.includes(destination)) {
+          if (policy === 'keep') {
+            const dot = !item.isDir && !item.name.startsWith('.') ? item.name.lastIndexOf('.') : -1;
+            const stem = dot > 0 ? item.name.slice(0, dot) : item.name;
+            const extension = dot > 0 ? item.name.slice(dot) : '';
+            let n = 1;
+            do { destination = `${target === '/' ? '' : target}/${stem} 副本${n === 1 ? '' : ` ${n}`}${extension}`; n++; }
+            while (entries.some((e) => e.path === destination) || reserved.includes(destination));
+          } else if (policy !== 'replace' || paths.includes(destination) || reserved.includes(destination) || !confirmed.includes(destination)) throw new Error('目标中已存在同名项目。');
+        }
+        reserved.push(destination);
+        return { path, item: { ...item }, destination };
+      });
+      result = plan.map(({ path, item, destination }) => {
+        if (entries.some((e) => e.path === destination)) remove(destination);
+        cloneTree(path, destination);
+        entries.push({ ...item, name: basename(destination), path: destination });
+        if (args.mode === 'cut') remove(path);
+        return destination;
+      });
+    }
   } else if (command === 'trash_entries' || command === 'delete_entries') {
     for (const path of args.paths as string[]) remove(path);
     result = undefined;

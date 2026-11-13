@@ -294,44 +294,173 @@ fn copy_entry(source: &Path, destination: &Path) -> Result<()> {
     }
 }
 
-pub fn transfer_entries(paths: Vec<String>, destination: &str, mode: &str) -> Result<Vec<String>> {
-    if mode != "copy" && mode != "cut" {
-        return Err("未知文件操作".into());
-    }
+fn transfer_sources(paths: &[String], destination: &str) -> Result<(PathBuf, Vec<PathBuf>)> {
     if paths.is_empty() {
         return Err("请选择文件或文件夹".into());
     }
     let destination = resolve_directory(destination)?;
-    let mut plan = Vec::new();
-    for path in &paths {
+    let mut sources = Vec::new();
+    for path in paths {
         let source = checked_source(path)?;
-        let target = destination.join(source.file_name().ok_or("无法操作根目录")?);
-        if source == target || exists(&target) || plan.iter().any(|(_, t)| t == &target) {
-            return Err(format!("目标中已存在「{}」，操作未开始", display(&target)));
-        }
         if destination.starts_with(&source) {
             return Err("不能将文件夹放入其自身或子文件夹".into());
         }
-        plan.push((source, target));
+        if sources.contains(&source) {
+            return Err("不能重复操作同一项目".into());
+        }
+        sources.push(source);
+    }
+    Ok((destination, sources))
+}
+
+pub fn transfer_conflicts(paths: Vec<String>, destination: &str) -> Result<Vec<String>> {
+    let (destination, sources) = transfer_sources(&paths, destination)?;
+    let mut targets = Vec::new();
+    let mut conflicts = Vec::new();
+    for source in sources {
+        let target = destination.join(source.file_name().ok_or("无法操作根目录")?);
+        if exists(&target) || targets.contains(&target) {
+            conflicts.push(display(&target));
+        }
+        targets.push(target);
+    }
+    Ok(conflicts)
+}
+
+fn unique_target(target: &Path, reserved: &[PathBuf]) -> PathBuf {
+    let name = target.file_name().unwrap_or_default().to_string_lossy();
+    let is_dir = fs::symlink_metadata(target).is_ok_and(|m| m.is_dir());
+    let (stem, extension) = if !is_dir && !name.starts_with('.') {
+        name.rsplit_once('.')
+            .map_or((name.as_ref(), ""), |(stem, ext)| {
+                (stem, &name[stem.len()..stem.len() + ext.len() + 1])
+            })
+    } else {
+        (name.as_ref(), "")
+    };
+    for index in 1u64.. {
+        let candidate = target.with_file_name(format!(
+            "{stem} 副本{}{extension}",
+            if index == 1 {
+                String::new()
+            } else {
+                format!(" {index}")
+            }
+        ));
+        if !exists(&candidate) && !reserved.contains(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+fn remove_entry(path: &Path) -> std::io::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileTypeExt;
+        if metadata.file_type().is_symlink_dir() {
+            return fs::remove_dir(path);
+        }
+    }
+    if metadata.is_dir() && !metadata.is_symlink() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
+}
+
+fn transfer_one(source: &Path, target: &Path, mode: &str) -> Result<()> {
+    if mode == "cut" {
+        crate::rename::exclusive(source, target)
+            .map_err(|e| io_error("无法移动（跨磁盘移动请先复制再移入回收站）", source, e))
+    } else {
+        copy_entry(source, target)
+    }
+}
+
+pub fn transfer_entries_with_policy(
+    paths: Vec<String>,
+    destination: &str,
+    mode: &str,
+    policy: &str,
+    confirmed: Vec<String>,
+) -> Result<Vec<String>> {
+    if mode != "copy" && mode != "cut" {
+        return Err("未知文件操作".into());
+    }
+    if !["reject", "replace", "keep"].contains(&policy) {
+        return Err("未知冲突处理方式".into());
+    }
+    let (destination, sources) = transfer_sources(&paths, destination)?;
+    let mut plan = Vec::new();
+    let mut reserved = Vec::new();
+    let all_sources = sources.clone();
+    for source in sources {
+        let mut target = destination.join(source.file_name().ok_or("无法操作根目录")?);
+        let conflict = exists(&target) || reserved.contains(&target);
+        if conflict {
+            match policy {
+                "keep" => target = unique_target(&target, &reserved),
+                "replace"
+                    if !all_sources.contains(&target)
+                        && !reserved.contains(&target)
+                        && confirmed.contains(&display(&target)) => {}
+                _ => return Err(format!("目标中已存在「{}」，操作未开始", display(&target))),
+            }
+        }
+        reserved.push(target.clone());
+        plan.push((source, target, conflict && policy == "replace"));
     }
     let mut completed = Vec::new();
-    for (source, target) in plan {
-        let result = if mode == "cut" {
-            // A failed cross-device rename leaves the source intact.
-            crate::rename::exclusive(&source, &target)
-                .map_err(|e| io_error("无法移动（跨磁盘移动请先复制再移入回收站）", &source, e))
+    for (source, target, replace) in plan {
+        // Move the existing entry aside first, so a failed operation can restore it.
+        let backup = if replace && exists(&target) {
+            let backup = unique_target(
+                &target.with_file_name(format!(".pudding-backup-{}", std::process::id())),
+                &reserved,
+            );
+            if let Err(e) = crate::rename::exclusive(&target, &backup) {
+                return Err(format!(
+                    "{}。已完成 {} 个项目",
+                    io_error("无法暂存目标", &target, e),
+                    completed.len()
+                ));
+            }
+            Some(backup)
         } else {
-            copy_entry(&source, &target)
+            None
         };
-        if let Err(error) = result {
+        if let Err(error) = transfer_one(&source, &target, mode) {
+            let restore = backup
+                .as_ref()
+                .and_then(|backup| {
+                    crate::rename::exclusive(backup, &target)
+                        .err()
+                        .map(|e| format!("；原目标保存在「{}」，恢复失败：{e}", display(backup)))
+                })
+                .unwrap_or_default();
             return Err(format!(
-                "{error}。已完成 {} 个项目，请刷新查看；源文件不会因复制失败而删除",
+                "{error}。已完成 {} 个项目，请刷新查看{restore}",
                 completed.len()
             ));
+        }
+        if let Some(backup) = backup {
+            if let Err(e) = remove_entry(&backup) {
+                return Err(format!(
+                    "已完成替换，但无法清理原目标「{}」：{e}。请刷新查看",
+                    display(&backup)
+                ));
+            }
         }
         completed.push(display(&target));
     }
     Ok(completed)
+}
+
+#[cfg(test)]
+fn transfer_entries(paths: Vec<String>, destination: &str, mode: &str) -> Result<Vec<String>> {
+    transfer_entries_with_policy(paths, destination, mode, "reject", vec![])
 }
 
 pub fn trash_entries(paths: Vec<String>) -> Result<()> {
@@ -673,6 +802,100 @@ mod tests {
         );
         assert!(source.join("nested/file.txt").exists());
         assert!(transfer_entries(paths, &display(&target), "copy").is_err());
+    }
+
+    #[test]
+    fn conflicts_can_keep_both_or_replace_files_and_directories() {
+        let root = tempdir().unwrap();
+        let source = root.path().join("source");
+        let dest = root.path().join("dest");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&dest).unwrap();
+        let source = source.canonicalize().unwrap();
+        let dest = dest.canonicalize().unwrap();
+        fs::write(source.join("报告.txt"), "new").unwrap();
+        fs::write(dest.join("报告.txt"), "old").unwrap();
+        fs::write(dest.join("报告 副本.txt"), "other").unwrap();
+        let paths = vec![display(&source.join("报告.txt"))];
+        let conflicts = transfer_conflicts(paths.clone(), &display(&dest)).unwrap();
+        assert_eq!(conflicts, vec![display(&dest.join("报告.txt"))]);
+        let copied = transfer_entries_with_policy(
+            paths.clone(),
+            &display(&dest),
+            "copy",
+            "keep",
+            conflicts.clone(),
+        )
+        .unwrap();
+        assert_eq!(copied, vec![display(&dest.join("报告 副本 2.txt"))]);
+        assert_eq!(fs::read_to_string(dest.join("报告.txt")).unwrap(), "old");
+        assert!(transfer_entries_with_policy(
+            paths.clone(),
+            &display(&dest),
+            "copy",
+            "replace",
+            vec![]
+        )
+        .is_err());
+        transfer_entries_with_policy(paths, &display(&dest), "cut", "replace", conflicts).unwrap();
+        assert_eq!(fs::read_to_string(dest.join("报告.txt")).unwrap(), "new");
+        assert!(!source.join("报告.txt").exists());
+        fs::create_dir(source.join("folder")).unwrap();
+        fs::write(source.join("folder/new"), "new").unwrap();
+        fs::create_dir(dest.join("folder")).unwrap();
+        fs::write(dest.join("folder/old"), "old").unwrap();
+        let paths = vec![display(&source.join("folder"))];
+        transfer_entries_with_policy(
+            paths,
+            &display(&dest),
+            "copy",
+            "replace",
+            vec![display(&dest.join("folder"))],
+        )
+        .unwrap();
+        assert!(dest.join("folder/new").exists());
+        assert!(!dest.join("folder/old").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_replacement_restores_original_and_same_folder_can_keep_both() {
+        use std::os::unix::fs::symlink;
+        let root = tempdir().unwrap();
+        let source = root.path().join("source");
+        let dest = root.path().join("dest");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&dest).unwrap();
+        let source = source.canonicalize().unwrap();
+        let dest = dest.canonicalize().unwrap();
+        symlink("missing", source.join("link")).unwrap();
+        fs::write(dest.join("link"), "original").unwrap();
+        let paths = vec![display(&source.join("link"))];
+        assert!(transfer_entries_with_policy(
+            paths,
+            &display(&dest),
+            "copy",
+            "replace",
+            vec![display(&dest.join("link"))]
+        )
+        .is_err());
+        assert_eq!(fs::read_to_string(dest.join("link")).unwrap(), "original");
+        assert_eq!(fs::read_dir(&dest).unwrap().count(), 1);
+        fs::write(source.join("file.txt"), "content").unwrap();
+        let paths = vec![display(&source.join("file.txt"))];
+        assert!(transfer_entries_with_policy(
+            paths.clone(),
+            &display(&source),
+            "copy",
+            "replace",
+            vec![display(&source.join("file.txt"))]
+        )
+        .is_err());
+        transfer_entries_with_policy(paths, &display(&source), "copy", "keep", vec![]).unwrap();
+        assert_eq!(
+            fs::read_to_string(source.join("file 副本.txt")).unwrap(),
+            "content"
+        );
     }
 
     #[test]

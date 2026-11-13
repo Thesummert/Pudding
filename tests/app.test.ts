@@ -179,6 +179,7 @@ describe('file manager interactions', () => {
     flushSync();
     await vi.waitFor(() => expect(button('Documents')).toBeTruthy());
     expect(window.devicePixelRatio).toBe(2);
+    vi.spyOn(api, 'transferConflicts').mockResolvedValue([]);
     const transfer = vi.spyOn(api, 'transfer').mockResolvedValue([]);
     // The old extra division mapped x=400 to x=200 in the sidebar.
     const hit = vi.spyOn(document, 'elementFromPoint').mockImplementation((x, y) => {
@@ -201,6 +202,34 @@ describe('file manager interactions', () => {
     expect(hit).toHaveBeenCalledWith(400, 300);
     expect(hit).toHaveBeenCalledWith(450, 400);
     await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
+  });
+
+  it('offers cancel, keep both and replace for clipboard conflicts', async () => {
+    await api.writeClipboard({ paths: ['/home/pudding/开始使用.md'], mode: 'cut' });
+    window.dispatchEvent(new Event('focus'));
+    await vi.waitFor(() => expect(host.querySelector('.clipboard-strip')).not.toBeNull());
+    const pasteButton = () => host.querySelector<HTMLButtonElement>('.clipboard-strip > button')!;
+    await click(pasteButton());
+    await vi.waitFor(() => expect(host.querySelector('.conflict-modal[open]')).not.toBeNull());
+    await click(button('取消'));
+    await vi.waitFor(() => expect(host.querySelector('.conflict-modal')).toBeNull());
+    expect(await api.readClipboard()).toEqual({ paths: ['/home/pudding/开始使用.md'], mode: 'cut' });
+    await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
+    await api.writeClipboard({ paths: ['/home/pudding/开始使用.md'], mode: 'copy' });
+    await click(pasteButton());
+    await vi.waitFor(() => expect(host.querySelector('.conflict-modal[open]')).not.toBeNull());
+    await click(button('并存'));
+    await vi.waitFor(() => expect(button('开始使用 副本.md')).toBeTruthy());
+    await doubleClick('Documents');
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    await click(pasteButton());
+    await vi.waitFor(() => expect(button('开始使用.md')).toBeTruthy());
+    await click(pasteButton());
+    await vi.waitFor(() => expect(host.querySelector('.conflict-modal[open]')).not.toBeNull());
+    await click(button('替换'));
+    await vi.waitFor(() => expect(host.querySelector('.conflict-modal')).toBeNull());
+    await vi.waitFor(() => expect(host.querySelector('[role="status"]')?.textContent ?? host.textContent).toContain('已复制'));
+    await api.delete(['/home/pudding/开始使用 副本.md', '/home/pudding/Documents/开始使用.md']);
   });
 
   it('reads fresh clipboard contents at paste time and reports failed clipboard writes', async () => {
@@ -241,6 +270,7 @@ describe('file manager interactions', () => {
 
   it.each(['grid', 'list'])('routes native drops to folders, places and blank space in %s view', async (view) => {
     if (view === 'list') await click(button('列表视图'));
+    vi.spyOn(api, 'transferConflicts').mockResolvedValue([]);
     const transfer = vi.spyOn(api, 'transfer').mockResolvedValue([]);
     const hit = vi.spyOn(document, 'elementFromPoint').mockReturnValue(button('Documents').querySelector('span'));
     const position = new PhysicalPosition(200, 240);
@@ -288,6 +318,7 @@ describe('file manager interactions', () => {
   });
 
   it('offers drop actions and uses modifiers for immediate transfers', async () => {
+    vi.spyOn(api, 'transferConflicts').mockResolvedValue([]);
     const transfer = vi.spyOn(api, 'transfer').mockResolvedValue([]);
     vi.spyOn(document, 'elementFromPoint').mockReturnValue(host.querySelector('.file-area'));
     const position = new PhysicalPosition(120, 120);
@@ -724,7 +755,10 @@ describe('file manager interactions', () => {
     await click(host.querySelector<HTMLButtonElement>('.clipboard-strip > button')!);
     await vi.waitFor(() => expect(button('重命名结果')).toBeTruthy());
     await click(host.querySelector<HTMLButtonElement>('.clipboard-strip > button')!);
-    await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain('同名'));
+    await vi.waitFor(() => expect(host.querySelector('.conflict-modal[open]')).not.toBeNull());
+    await click(button('取消'));
+    await vi.waitFor(() => expect(host.querySelector('.conflict-modal[open]')).toBeNull());
+    await vi.waitFor(() => expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false'));
     await contextMenu('重命名结果');
     await click(menuItem('剪切'));
     await click(button('上一级'));
