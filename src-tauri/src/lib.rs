@@ -18,7 +18,7 @@ use tauri_plugin_opener::OpenerExt;
 async fn read_file_clipboard(
     app: tauri::AppHandle,
 ) -> Result<Option<clipboard::FileClipboard>, String> {
-    blocking(move || app.state::<clipboard::SystemClipboard>().read()).await
+    clipboard_task(app, |clipboard| clipboard.read()).await
 }
 
 #[tauri::command]
@@ -26,7 +26,7 @@ async fn write_file_clipboard(
     app: tauri::AppHandle,
     operation: clipboard::FileClipboard,
 ) -> Result<(), String> {
-    blocking(move || app.state::<clipboard::SystemClipboard>().write(operation)).await
+    clipboard_task(app, move |clipboard| clipboard.write(operation)).await
 }
 
 #[tauri::command]
@@ -34,12 +34,33 @@ async fn clear_file_clipboard(
     app: tauri::AppHandle,
     expected: clipboard::FileClipboard,
 ) -> Result<(), String> {
-    blocking(move || app.state::<clipboard::SystemClipboard>().clear(expected)).await
+    clipboard_task(app, move |clipboard| clipboard.clear(expected)).await
 }
 
 #[tauri::command]
 async fn write_clipboard_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
-    blocking(move || app.state::<clipboard::SystemClipboard>().text(text)).await
+    clipboard_task(app, move |clipboard| clipboard.text(text)).await
+}
+
+async fn clipboard_task<T: Send + 'static>(
+    app: tauri::AppHandle,
+    work: impl FnOnce(&clipboard::SystemClipboard) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let (sender, mut receiver) = tauri::async_runtime::channel(1);
+        let handle = app.clone();
+        app.run_on_main_thread(move || {
+            let _ = sender.try_send(work(&handle.state::<clipboard::SystemClipboard>()));
+        })
+        .map_err(|e| e.to_string())?;
+        receiver
+            .recv()
+            .await
+            .ok_or("系统剪贴板任务已结束".to_string())?
+    }
+    #[cfg(not(target_os = "linux"))]
+    blocking(move || work(&app.state::<clipboard::SystemClipboard>())).await
 }
 
 #[derive(serde::Serialize)]

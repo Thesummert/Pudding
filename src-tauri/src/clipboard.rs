@@ -1,11 +1,15 @@
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 use clipboard_rs::ClipboardContent;
+#[cfg(not(target_os = "linux"))]
 use clipboard_rs::{Clipboard, ClipboardContext, ContentFormat};
 use serde::{Deserialize, Serialize};
-use std::{path::Path, sync::Mutex};
+use std::path::Path;
+#[cfg(not(target_os = "linux"))]
+use std::sync::Mutex;
 
 const MODE: &str = "app.pudding.file-operation";
 const GNOME: &str = "x-special/gnome-copied-files";
+#[cfg(not(target_os = "linux"))]
 const EFFECT: &str = "Preferred DropEffect";
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -15,8 +19,13 @@ pub struct FileClipboard {
 }
 
 // Keep the context alive: on X11 the owning process serves clipboard requests.
+#[cfg(not(target_os = "linux"))]
 #[derive(Default)]
 pub struct SystemClipboard(Mutex<Option<ClipboardContext>>);
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+pub struct SystemClipboard {}
 
 fn local_paths(files: Vec<String>) -> Result<Vec<String>, String> {
     let mut paths = Vec::new();
@@ -46,6 +55,7 @@ fn local_paths(files: Vec<String>) -> Result<Vec<String>, String> {
     Ok(paths)
 }
 
+#[cfg(not(target_os = "linux"))]
 fn read(context: &ClipboardContext) -> Result<Option<FileClipboard>, String> {
     let formats = context.available_formats().map_err(|e| e.to_string())?;
     let gnome = if formats.iter().any(|f| f == GNOME) {
@@ -87,6 +97,7 @@ fn read(context: &ClipboardContext) -> Result<Option<FileClipboard>, String> {
     }))
 }
 
+#[cfg(not(target_os = "linux"))]
 impl SystemClipboard {
     fn with<T>(
         &self,
@@ -173,6 +184,119 @@ impl SystemClipboard {
 
     pub fn text(&self, text: String) -> Result<(), String> {
         self.with(|context| context.set_text(text).map_err(|e| e.to_string()))
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl SystemClipboard {
+    fn board() -> Result<gtk::Clipboard, String> {
+        let display = gtk::gdk::Display::default().ok_or("无法访问系统剪贴板")?;
+        Ok(gtk::Clipboard::for_display(
+            &display,
+            &gtk::gdk::Atom::intern("CLIPBOARD"),
+        ))
+    }
+
+    pub fn read(&self) -> Result<Option<FileClipboard>, String> {
+        let board = Self::board()?;
+        let targets = board.wait_for_targets().unwrap_or_default();
+        let get = |name: &str| {
+            let atom = gtk::gdk::Atom::intern(name);
+            targets
+                .contains(&atom)
+                .then(|| board.wait_for_contents(&atom))
+                .flatten()
+                .map(|data| data.data())
+        };
+        let gnome = get(GNOME);
+        let uri = get("text/uri-list");
+        let files = if let Some(data) = uri.as_ref() {
+            String::from_utf8_lossy(data)
+                .lines()
+                .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                .map(str::to_owned)
+                .collect()
+        } else if let Some(data) = gnome.as_ref() {
+            String::from_utf8_lossy(data)
+                .lines()
+                .skip(1)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect()
+        } else {
+            return Ok(None);
+        };
+        let paths = local_paths(files)?;
+        if paths.is_empty() {
+            return Ok(None);
+        }
+        let cut = get(MODE).as_deref() == Some(b"cut")
+            || get("application/x-kde-cutselection").as_deref() == Some(b"1")
+            || gnome
+                .as_deref()
+                .is_some_and(|data| data.starts_with(b"cut\n"));
+        Ok(Some(FileClipboard {
+            paths,
+            mode: if cut { "cut" } else { "copy" }.into(),
+        }))
+    }
+
+    pub fn write(&self, operation: FileClipboard) -> Result<(), String> {
+        if operation.mode != "copy" && operation.mode != "cut" {
+            return Err("未知剪贴操作".into());
+        }
+        let paths = local_paths(operation.paths)?;
+        if paths.is_empty() {
+            return Err("请选择文件或文件夹".into());
+        }
+        for path in &paths {
+            std::fs::symlink_metadata(path).map_err(|e| format!("无法复制「{path}」：{e}"))?;
+        }
+        let uris: Vec<String> = paths
+            .iter()
+            .map(|p| url::Url::from_file_path(p).unwrap().into())
+            .collect();
+        let values = [
+            operation.mode.as_bytes().to_vec(),
+            uris.join("\r\n").into_bytes(),
+            format!("{}\n{}", operation.mode, uris.join("\n")).into_bytes(),
+            if operation.mode == "cut" {
+                b"1".to_vec()
+            } else {
+                b"0".to_vec()
+            },
+        ];
+        let targets: Vec<_> = [
+            MODE,
+            "text/uri-list",
+            GNOME,
+            "application/x-kde-cutselection",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, name)| gtk::TargetEntry::new(name, gtk::TargetFlags::empty(), i as u32))
+        .collect();
+        if !Self::board()?.set_with_data(&targets, move |_, selection, info| {
+            if let Some(value) = values.get(info as usize) {
+                selection.set(&selection.target(), 8, value);
+            }
+        }) {
+            return Err("写入系统剪贴板失败".into());
+        }
+        Ok(())
+    }
+
+    pub fn clear(&self, expected: FileClipboard) -> Result<(), String> {
+        if self.read()?.as_ref() == Some(&expected) {
+            // Replacing the selection also clears file data owned by another app.
+            Self::board()?.set_text("");
+        }
+        Ok(())
+    }
+
+    pub fn text(&self, text: String) -> Result<(), String> {
+        Self::board()?.set_text(&text);
+        Ok(())
     }
 }
 
