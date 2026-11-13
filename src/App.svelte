@@ -16,6 +16,7 @@
   import type { DragDropEvent } from '@tauri-apps/api/webview';
   import { dragClientPosition } from './lib/drag';
   import { virtualWindow } from './lib/virtual-list';
+  import { transferEstimate } from './lib/transfer-progress';
 
   type Preferences = { view: ViewMode; hidden: boolean; inspector: boolean; size: number; dark: boolean; terminal: string; customTerminal: string };
   function loadPreferences(): Preferences {
@@ -110,14 +111,36 @@
   let dialogError = $state('');
   let transferConflict = $state<{ paths: string[]; resolve: (choice: 'replace' | 'keep' | 'cancel') => void } | null>(null);
 
+  type TransferTask = { id: number; mode: 'copy' | 'cut'; destination: string; done: number; total: number | null; startedAt: number | null };
+  let transferTasks = $state<TransferTask[]>([]);
+  let nextTransferTask = 0;
+  let transferNow = $state(Date.now());
+  $effect(() => {
+    if (!transferTasks.length) return;
+    transferNow = Date.now();
+    const timer = setInterval(() => { transferNow = Date.now(); }, 1000);
+    return () => clearInterval(timer);
+  });
+
   async function transferWithConflicts(paths: string[], destination: string, mode: 'copy' | 'cut', onstart: () => void = () => {}): Promise<string[] | null> {
     const conflicts = await api.transferConflicts(paths, destination);
-    if (!conflicts.length) { onstart(); return api.transfer(paths, destination, mode); }
-    const choice = await new Promise<'replace' | 'keep' | 'cancel'>((resolve) => { transferConflict = { paths: conflicts, resolve }; });
-    transferConflict = null;
-    if (choice === 'cancel') return null;
+    let choice: 'reject' | 'replace' | 'keep' | 'cancel' = 'reject';
+    if (conflicts.length) {
+      choice = await new Promise<'replace' | 'keep' | 'cancel'>((resolve) => { transferConflict = { paths: conflicts, resolve }; });
+      transferConflict = null;
+      if (choice === 'cancel') return null;
+    }
+    const id = ++nextTransferTask;
+    transferTasks = [...transferTasks, { id, mode, destination, done: 0, total: null, startedAt: null }];
     onstart();
-    return api.transfer(paths, destination, mode, choice, conflicts);
+    operating = false;
+    try {
+      return await api.transfer(paths, destination, mode, choice, conflicts, (done, total) => {
+        const now = Date.now();
+        transferNow = now;
+        transferTasks = transferTasks.map((task) => task.id === id ? { ...task, done, total, startedAt: task.startedAt ?? now } : task);
+      });
+    } finally { transferTasks = transferTasks.filter((task) => task.id !== id); }
   }
   let openWithEntry = $state<FileEntry | null>(null);
   let trashDialog: HTMLDialogElement;
@@ -595,9 +618,11 @@
       notify(errorMessage(error), true);
     } finally {
       await syncClipboard();
-      operating = false;
-      await navigate(destination, undefined, true);
-      if (paths.length) selected = new Set(paths);
+      if (!started) operating = false;
+      if (directory?.path === destination && !busy) {
+        await navigate(destination, undefined, true);
+        if (paths.length && directory?.path === destination) selected = new Set(paths);
+      }
     }
   }
 
@@ -642,16 +667,19 @@
     const current = directory.path;
     operating = true;
     let paths: string[] = [];
+    let started = false;
     try {
-      const result = await transferWithConflicts(sources, destination, mode);
+      const result = await transferWithConflicts(sources, destination, mode, () => { started = true; });
       if (result === null) return;
       paths = result;
       notify(`已${mode === 'cut' ? '移动' : '复制'} ${paths.length} 个项目到「${basename(destination) || destination}」`);
     } catch (error) { notify(errorMessage(error), true); }
     finally {
-      operating = false;
-      await navigate(current, undefined, true);
-      if (destination === current && paths.length) selected = new Set(paths);
+      if (!started) operating = false;
+      if (directory?.path === current && !busy) {
+        await navigate(current, undefined, true);
+        if (destination === current && paths.length && directory?.path === current) selected = new Set(paths);
+      }
     }
   }
 
@@ -1043,6 +1071,20 @@
         {/if}
       </div>
 
+      {#if transferTasks.length}
+        <section class="transfer-tasks" aria-label="后台任务">
+          {#each transferTasks as task (task.id)}
+            <div class="transfer-task">
+              <LoaderCircle size={15} class="spin" />
+              <div class="transfer-task-content">
+                <div class="transfer-task-label"><span>正在{task.mode === 'copy' ? '复制' : '移动'}到「{basename(task.destination) || task.destination}」</span><span>{#if task.total !== null && task.total > 0}{Math.min(100, Math.floor(task.done / task.total * 100))}%{:else}准备中…{/if}</span></div>
+                <div class="transfer-task-details"><span>速度：{transferEstimate(task.done, task.total, task.startedAt, transferNow, task.mode).speed}</span><span>{transferEstimate(task.done, task.total, task.startedAt, transferNow, task.mode).remaining}</span></div>
+                {#if task.total !== null && task.total > 0}<progress max={task.total} value={Math.min(task.done, task.total)} aria-label={task.mode === 'copy' ? '复制进度' : '移动进度'}></progress>{:else}<progress aria-label={task.mode === 'copy' ? '复制进度' : '移动进度'}></progress>{/if}
+              </div>
+            </div>
+          {/each}
+        </section>
+      {/if}
       <footer class="status-bar"><span>{#if operating}<LoaderCircle size={12} class="spin" />正在处理文件…{:else if loading}<LoaderCircle size={12} class="spin" />正在读取…{:else if searching}<LoaderCircle size={12} class="spin" />正在搜索，已扫描 {scanned} 个项目…{:else}<span class="status-dot"></span>一切就绪{/if}{#if metadataRequest && directory?.path === metadataRequest.path}<span class="skipped-label">正在读取文件信息…</span>{/if}{#if directory?.skipped}<span class="skipped-label">已跳过 {directory.skipped} 个无法读取的项目</span>{/if}</span><span>{#if !desktop}浏览器演示 · 示例数据仅保存在本次会话{:else}{info?.platform === 'macos' ? 'macOS' : info?.platform === 'windows' ? 'Windows' : 'Linux'} · 本地文件系统{/if}<span class="status-divider"></span><kbd>{shortcutModifier} L</kbd> 输入路径</span></footer>
     </main>
   </div>

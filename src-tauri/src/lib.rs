@@ -250,6 +250,8 @@ async fn rename_entry(path: String, name: String) -> Result<String, String> {
 
 #[tauri::command]
 async fn transfer_entries(
+    window: tauri::WebviewWindow,
+    task_id: Option<String>,
     paths: Vec<String>,
     destination: String,
     mode: String,
@@ -257,12 +259,17 @@ async fn transfer_entries(
     confirmed: Option<Vec<String>>,
 ) -> Result<Vec<String>, String> {
     blocking(move || {
-        filesystem::transfer_entries_with_policy(
+        filesystem::transfer_entries_with_progress(
             paths,
             &destination,
             &mode,
             policy.as_deref().unwrap_or("reject"),
             confirmed.unwrap_or_default(),
+            |done, total| {
+                if let Some(id) = &task_id {
+                    let _ = window.emit("transfer-progress", (id, done, total));
+                }
+            },
         )
     })
     .await

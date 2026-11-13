@@ -441,3 +441,12 @@ h1 { margin: 4px 0 3px; font-size: 22px; color: var(--heading); letter-spacing: 
 .open-with-app:hover { background: var(--inset); }
 
 .context-submenu { margin: 2px 0 4px 12px; padding-left: 6px; border-left: 1px solid var(--line-strong); }
+
+.transfer-tasks { display: flex; flex-direction: column; gap: 8px; max-height: 180px; overflow-y: auto; padding: 10px 23px; border-top: 1px solid var(--line); background: var(--surface); }
+.transfer-task { display: flex; align-items: center; gap: 10px; color: var(--secondary); font-size: 11px; }
+.transfer-task-content { flex: 1; min-width: 0; }
+.transfer-task-label { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
+.transfer-task-label span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.transfer-task progress { display: block; width: 100%; height: 4px; accent-color: #70b39c; }
+
+.transfer-task-details { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; color: var(--muted); font-size: 10px; }

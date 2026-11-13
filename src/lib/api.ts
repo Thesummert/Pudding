@@ -64,7 +64,15 @@ export const api = {
   createFile: (parent: string, name: string) => call<string>('create_file', { parent, name }),
   rename: (path: string, name: string) => call<string>('rename_entry', { path, name }),
   transferConflicts: (paths: string[], destination: string) => call<string[]>('transfer_conflicts', { paths, destination }),
-  transfer: (paths: string[], destination: string, mode: 'copy' | 'cut', policy: 'reject' | 'replace' | 'keep' = 'reject', confirmed: string[] = []) => call<string[]>('transfer_entries', { paths, destination, mode, policy, confirmed }),
+  transfer: async (paths: string[], destination: string, mode: 'copy' | 'cut', policy: 'reject' | 'replace' | 'keep' = 'reject', confirmed: string[] = [], progress?: (done: number, total: number | null) => void) => {
+    if (!desktop) return call<string[]>('transfer_entries', { paths, destination, mode, policy, confirmed });
+    const taskId = crypto.randomUUID();
+    const unlisten = await getCurrentWebview().listen<[string, number, number | null]>('transfer-progress', (event) => {
+      if (event.payload[0] === taskId) progress?.(event.payload[1], event.payload[2]);
+    });
+    try { return await invoke<string[]>('transfer_entries', { paths, destination, mode, policy, confirmed, taskId }); }
+    finally { unlisten(); }
+  },
   trash: (paths: string[]) => call<void>('trash_entries', { paths }),
   delete: (paths: string[]) => call<void>('delete_entries', { paths }),
   open: (path: string) => call<void>('open_entry', { path }),

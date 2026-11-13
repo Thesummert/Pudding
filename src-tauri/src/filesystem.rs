@@ -1,9 +1,9 @@
 use serde::Serialize;
 use std::{
     fs::{self, OpenOptions},
-    io::{self, Read},
+    io::{self, Read, Write},
     path::{Component, Path, PathBuf},
-    time::UNIX_EPOCH,
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 
 type Result<T> = std::result::Result<T, String>;
@@ -433,7 +433,7 @@ pub fn rename_entry(path: &str, name: &str) -> Result<String> {
     Ok(display(&destination))
 }
 
-fn copy_entry(source: &Path, destination: &Path) -> Result<()> {
+fn copy_entry(source: &Path, destination: &Path, progress: &mut dyn FnMut(u64)) -> Result<()> {
     let metadata = fs::symlink_metadata(source).map_err(|e| io_error("无法读取", source, e))?;
     if metadata.is_symlink() {
         return Err(format!("暂不支持复制符号链接：{}", display(source)));
@@ -443,7 +443,11 @@ fn copy_entry(source: &Path, destination: &Path) -> Result<()> {
         let result = (|| {
             for entry in fs::read_dir(source).map_err(|e| io_error("无法读取", source, e))? {
                 let entry = entry.map_err(|e| io_error("无法读取目录项目", source, e))?;
-                copy_entry(&entry.path(), &destination.join(entry.file_name()))?;
+                copy_entry(
+                    &entry.path(),
+                    &destination.join(entry.file_name()),
+                    progress,
+                )?;
             }
             Ok(())
         })();
@@ -458,7 +462,19 @@ fn copy_entry(source: &Path, destination: &Path) -> Result<()> {
             .create_new(true)
             .open(destination)
             .map_err(|e| io_error("无法创建", destination, e))?;
-        if let Err(error) = io::copy(&mut input, &mut output) {
+        let result = (|| -> io::Result<()> {
+            let mut buffer = [0u8; 128 * 1024];
+            loop {
+                let count = input.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                output.write_all(&buffer[..count])?;
+                progress(count as u64);
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
             drop(output);
             let _ = fs::remove_file(destination);
             return Err(io_error("无法复制", source, error));
@@ -551,21 +567,54 @@ fn remove_entry(path: &Path) -> std::io::Result<()> {
     }
 }
 
-fn transfer_one(source: &Path, target: &Path, mode: &str) -> Result<()> {
+fn transfer_one(
+    source: &Path,
+    target: &Path,
+    mode: &str,
+    progress: &mut dyn FnMut(u64),
+) -> Result<()> {
     if mode == "cut" {
         crate::rename::exclusive(source, target)
             .map_err(|e| io_error("无法移动（跨磁盘移动请先复制再移入回收站）", source, e))
     } else {
-        copy_entry(source, target)
+        copy_entry(source, target, progress)
     }
 }
 
+#[cfg(test)]
 pub fn transfer_entries_with_policy(
     paths: Vec<String>,
     destination: &str,
     mode: &str,
     policy: &str,
     confirmed: Vec<String>,
+) -> Result<Vec<String>> {
+    transfer_entries_with_progress(paths, destination, mode, policy, confirmed, |_, _| {})
+}
+
+fn transfer_size(path: &Path) -> io::Result<u64> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.is_symlink() {
+        return Ok(0);
+    }
+    if metadata.is_file() {
+        return Ok(metadata.len());
+    }
+    if !metadata.is_dir() {
+        return Ok(0);
+    }
+    fs::read_dir(path)?.try_fold(0u64, |total, entry| {
+        Ok(total.saturating_add(transfer_size(&entry?.path())?))
+    })
+}
+
+pub fn transfer_entries_with_progress(
+    paths: Vec<String>,
+    destination: &str,
+    mode: &str,
+    policy: &str,
+    confirmed: Vec<String>,
+    mut report: impl FnMut(u64, Option<u64>),
 ) -> Result<Vec<String>> {
     if mode != "copy" && mode != "cut" {
         return Err("未知文件操作".into());
@@ -593,6 +642,18 @@ pub fn transfer_entries_with_policy(
         reserved.push(target.clone());
         plan.push((source, target, conflict && policy == "replace"));
     }
+    let total = if mode == "copy" {
+        plan.iter()
+            .try_fold(0u64, |sum, (source, _, _)| {
+                transfer_size(source).map(|size| sum.saturating_add(size))
+            })
+            .ok()
+    } else {
+        Some(plan.len() as u64)
+    };
+    let mut done = 0u64;
+    let mut last_report = Instant::now();
+    report(done, total);
     let mut completed = Vec::new();
     for (source, target, replace) in plan {
         // Move the existing entry aside first, so a failed operation can restore it.
@@ -612,7 +673,13 @@ pub fn transfer_entries_with_policy(
         } else {
             None
         };
-        if let Err(error) = transfer_one(&source, &target, mode) {
+        if let Err(error) = transfer_one(&source, &target, mode, &mut |bytes| {
+            done = done.saturating_add(bytes);
+            if last_report.elapsed() >= Duration::from_millis(100) {
+                report(done, total);
+                last_report = Instant::now();
+            }
+        }) {
             let restore = backup
                 .as_ref()
                 .and_then(|backup| {
@@ -635,6 +702,10 @@ pub fn transfer_entries_with_policy(
             }
         }
         completed.push(display(&target));
+        if mode == "cut" {
+            done += 1;
+        }
+        report(done, total);
     }
     Ok(completed)
 }
@@ -1053,6 +1124,46 @@ mod tests {
         let renamed = rename_entry(&path, "three").unwrap();
         assert!(Path::new(&renamed).is_dir());
         assert!(!Path::new(&path).exists());
+    }
+
+    #[test]
+    fn transfer_progress_counts_nested_bytes_and_moved_items() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source");
+        let target = dir.path().join("target");
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::create_dir(&target).unwrap();
+        fs::write(source.join("nested/file"), vec![42; 300_000]).unwrap();
+        let mut progress = Vec::new();
+        transfer_entries_with_progress(
+            vec![display(&source)],
+            &display(&target),
+            "copy",
+            "reject",
+            vec![],
+            |done, total| progress.push((done, total)),
+        )
+        .unwrap();
+        assert_eq!(progress.first(), Some(&(0, Some(300_000))));
+        assert_eq!(progress.last(), Some(&(300_000, Some(300_000))));
+        assert_eq!(
+            fs::read(target.join("source/nested/file")).unwrap().len(),
+            300_000
+        );
+        let moved = dir.path().join("moved");
+        fs::create_dir(&moved).unwrap();
+        progress.clear();
+        transfer_entries_with_progress(
+            vec![display(&source)],
+            &display(&moved),
+            "cut",
+            "reject",
+            vec![],
+            |done, total| progress.push((done, total)),
+        )
+        .unwrap();
+        assert_eq!(progress.first(), Some(&(0, Some(1))));
+        assert_eq!(progress.last(), Some(&(1, Some(1))));
     }
 
     #[test]
