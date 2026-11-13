@@ -578,12 +578,40 @@ describe('file manager interactions', () => {
   it('opens a folder from the context menu in a tab or window', async () => {
     const openWindow = vi.spyOn(api, 'openWindow').mockResolvedValue();
     await contextMenu('Documents');
+    await click(menuItem('在其他地方打开'));
     await click(menuItem('在新窗口中打开'));
     expect(openWindow).toHaveBeenCalledWith('/home/pudding/Documents');
     await contextMenu('Documents');
+    await click(menuItem('在其他地方打开'));
     await click(menuItem('在新标签页中打开'));
     await vi.waitFor(() => expect(host.querySelectorAll('[role=tab]')).toHaveLength(2));
     await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+  });
+
+  it('groups folder destinations and resets the submenu on reopening', async () => {
+    const openWindow = vi.spyOn(api, 'openWindow').mockResolvedValue();
+    await contextMenu('Documents');
+    const trigger = menuItem('在其他地方打开');
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(host.querySelector('.open-elsewhere-submenu')).toBeNull();
+    trigger.dispatchEvent(new MouseEvent('mouseenter'));
+    await tick();
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(host.querySelectorAll('.open-elsewhere-submenu [role="menuitem"]')).toHaveLength(3);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await contextMenu('Documents');
+    expect(menuItem('在其他地方打开').getAttribute('aria-expanded')).toBe('false');
+    menuItem('在其他地方打开').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(document.activeElement?.textContent).toContain('在新标签页中打开'));
+    await click(menuItem('在新窗口中打开'));
+    expect(openWindow).toHaveBeenCalledWith('/home/pudding/Documents');
+    host.querySelector('.file-area')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await tick();
+    await click(menuItem('在其他地方打开'));
+    await click(menuItem('在新窗口中打开'));
+    expect(openWindow).toHaveBeenLastCalledWith('/home/pudding');
+    await contextMenu('开始使用.md');
+    expect([...host.querySelectorAll('[role="menuitem"]')].some((item) => item.textContent?.includes('在其他地方打开'))).toBe(false);
   });
 
   it('keeps navigation history separate across tabs and closes the active tab', async () => {
@@ -698,6 +726,7 @@ describe('file manager interactions', () => {
     expect(JSON.parse(localStorage.getItem('pudding.preferences')!)).toMatchObject({ terminal: 'custom', customTerminal: '/Applications/My Terminal.app' });
     await click(button('完成'));
     await contextMenu('Documents');
+    await click(menuItem('在其他地方打开'));
     await click(menuItem('在终端中打开'));
     expect(openTerminal).toHaveBeenCalledWith('/home/pudding/Documents', 'custom', '/Applications/My Terminal.app');
   });
@@ -705,10 +734,12 @@ describe('file manager interactions', () => {
   it('opens a folder or the current directory in the configured terminal', async () => {
     const openTerminal = vi.spyOn(api, 'openTerminal').mockResolvedValue();
     await contextMenu('Documents');
+    await click(menuItem('在其他地方打开'));
     await click(menuItem('在终端中打开'));
     expect(openTerminal).toHaveBeenCalledWith('/home/pudding/Documents', 'system', '');
     host.querySelector('.file-area')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     await tick();
+    await click(menuItem('在其他地方打开'));
     await click(menuItem('在终端中打开'));
     expect(openTerminal).toHaveBeenLastCalledWith('/home/pudding', 'system', '');
   });
@@ -804,6 +835,26 @@ describe('file manager interactions', () => {
     expect(host.querySelector('.trash-modal h2')?.textContent).toBe('移入回收站？');
     await click(host.querySelector<HTMLButtonElement>('.trash-modal .danger-button')!);
     await vi.waitFor(() => expect(trash).toHaveBeenCalledWith(['/home/pudding/开始使用.md']));
+  });
+
+  it('creates empty files from the toolbar and context menu without overwriting', async () => {
+    await click(button('新建文件'));
+    expect(host.querySelector('dialog h2')?.textContent).toBe('新建文件');
+    await type('#entry-name', '../invalid');
+    expect(host.querySelector('.field-error')?.textContent).toContain('名称不能包含');
+    await submitName('开始使用.md');
+    await vi.waitFor(() => expect(host.querySelector('.field-error')?.textContent).toContain('同名'));
+    await submitName('新建 测试.txt');
+    await vi.waitFor(() => expect(host.querySelector('dialog[open]')).toBeNull());
+    await vi.waitFor(() => expect(button('新建 测试.txt').getAttribute('aria-pressed')).toBe('true'));
+    expect((await api.previewBytes('/home/pudding/新建 测试.txt', 'text')).length).toBe(0);
+    host.querySelector('.file-area')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await tick();
+    await click(menuItem('新建文件'));
+    await submitName('无扩展名');
+    await vi.waitFor(() => expect(host.querySelector('dialog[open]')).toBeNull());
+    await vi.waitFor(() => expect(button('无扩展名')).toBeTruthy());
+    await api.delete(['/home/pudding/新建 测试.txt', '/home/pudding/无扩展名']);
   });
 
   it('creates, validates, renames, copies, cuts and trashes entries through the UI', async () => {

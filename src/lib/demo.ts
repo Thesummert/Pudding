@@ -7,6 +7,7 @@ import sampleVideo from './demo-videos/sample.mp4?url';
 const home = '/home/pudding';
 const now = Math.floor(Date.now() / 1000);
 const folders: Record<string, FileEntry[]> = {};
+const textContents: Record<string, string> = {};
 const videoContents: Record<string, string> = { [`${home}/Videos/示例视频.mp4`]: sampleVideo };
 const imageContents: Record<string, string> = { [`${home}/Pictures/海岸.svg`]: coast, [`${home}/Pictures/山间.svg`]: mountains };
 
@@ -52,6 +53,7 @@ function find(path: string): FileEntry {
 }
 
 function cloneTree(source: string, target: string) {
+  if (Object.hasOwn(textContents, source)) textContents[target] = textContents[source];
   if (imageContents[source]) imageContents[target] = imageContents[source];
   if (videoContents[source]) videoContents[target] = videoContents[source];
   if (!folders[source]) return;
@@ -60,6 +62,7 @@ function cloneTree(source: string, target: string) {
 }
 
 function remove(path: string) {
+  for (const text of Object.keys(textContents)) if (text === path || text.startsWith(`${path}/`)) delete textContents[text];
   for (const image of Object.keys(imageContents)) if (image === path || image.startsWith(`${path}/`)) delete imageContents[image];
   for (const video of Object.keys(videoContents)) if (video === path || video.startsWith(`${path}/`)) delete videoContents[video];
   for (const parent of Object.keys(folders)) {
@@ -107,18 +110,21 @@ export async function demoInvoke<T>(command: string, args: Record<string, unknow
   else if (command === 'read_directory') {
     const path = String(args.path).replace(/^~(?=\/|$)/, home).replace(/\/$/, '') || '/';
     result = { path, parent: path === '/' ? null : path.slice(0, path.lastIndexOf('/')) || '/', entries: structuredClone(getFolder(path)), skipped: 0 } satisfies DirectoryListing;
-  } else if (command === 'create_folder' || command === 'rename_entry') {
+  } else if (command === 'create_folder' || command === 'create_file' || command === 'rename_entry') {
     const name = String(args.name);
     const invalid = validateName(name);
     if (invalid) throw new Error(invalid);
     const oldPath = String(args.path);
-    const parent = command === 'create_folder' ? String(args.parent) : oldPath.slice(0, oldPath.lastIndexOf('/')) || '/';
+    const parent = command !== 'rename_entry' ? String(args.parent) : oldPath.slice(0, oldPath.lastIndexOf('/')) || '/';
     const entries = getFolder(parent);
     const path = `${parent === '/' ? '' : parent}/${name}`;
     if (entries.some((e) => e.name === name)) throw new Error('已存在同名项目。');
     if (command === 'create_folder') {
       entries.push(entry(parent === '/' ? '' : parent, name, true));
       folders[path] = [];
+    } else if (command === 'create_file') {
+      entries.push(entry(parent === '/' ? '' : parent, name, false));
+      textContents[path] = '';
     } else {
       const item = find(oldPath);
       cloneTree(oldPath, path);
@@ -179,7 +185,7 @@ export async function demoInvoke<T>(command: string, args: Record<string, unknow
   } else if (command === 'read_preview_file') {
     const item = find(String(args.path));
     if (args.kind === 'pdf' && item.extension.toLowerCase() === 'pdf') result = demoPdf();
-    else if (args.kind === 'text') result = new TextEncoder().encode(`这是「${item.name}」的演示内容。\n`).buffer;
+    else if (args.kind === 'text') result = new TextEncoder().encode(textContents[item.path] ?? `这是「${item.name}」的演示内容。\n`).buffer;
     else throw new Error('演示中没有此文件的预览内容。');
   } else if (command === 'read_image') {
     const item = find(String(args.path));

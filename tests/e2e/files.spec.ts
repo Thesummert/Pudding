@@ -63,6 +63,21 @@ test('create, rename, conflict validation and trash a folder', async ({ page }) 
   await expect(renamed).toHaveCount(0);
 });
 
+test('creates an empty file from the context menu', async ({ page }) => {
+  await page.locator('.file-area').click({ button: 'right', position: { x: 5, y: 5 } });
+  await page.getByRole('menuitem', { name: '新建文件', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('heading', { name: '新建文件' })).toBeVisible();
+  await dialog.getByLabel('名称').fill('示例文件.txt');
+  await dialog.getByRole('button', { name: '创建文件', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '示例文件.txt', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '新建文件', exact: true }).click();
+  await page.getByRole('dialog').getByLabel('名称').fill('示例文件.txt');
+  await page.getByRole('dialog').getByRole('button', { name: '创建文件', exact: true }).click();
+  await expect(page.locator('.field-error')).toContainText('同名');
+});
+
 test('copy and cut between folders without overwriting existing files', async ({ page }) => {
   await page.getByRole('button', { name: '开始使用.md', exact: true }).click({ button: 'right' });
   await page.locator('.context-menu').getByRole('menuitem').filter({ hasText: /^复制/ }).first().click();
@@ -80,6 +95,17 @@ test('copy and cut between folders without overwriting existing files', async ({
   await expect(page.getByRole('button', { name: '开始使用.md', exact: true })).toBeVisible();
   await page.getByRole('navigation', { name: '常用位置' }).getByRole('button', { name: '文档', exact: true }).click();
   await expect(page.getByRole('button', { name: '开始使用.md', exact: true })).toHaveCount(0);
+});
+
+test('opens a folder in a new tab through the destinations submenu', async ({ page }) => {
+  await page.getByRole('button', { name: 'Documents', exact: true }).click({ button: 'right' });
+  const trigger = page.getByRole('menuitem', { name: '在其他地方打开' });
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  await trigger.hover();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await page.getByRole('menu', { name: '在其他地方打开' }).getByRole('menuitem', { name: '在新标签页中打开' }).click();
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await expect(page.getByRole('heading', { name: '文档.' })).toBeVisible();
 });
 
 test('selection, keyboard navigation and preview disclosure', async ({ page }) => {

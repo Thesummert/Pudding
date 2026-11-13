@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert, Eject, Settings, Network, Terminal } from '@lucide/svelte';
+  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, FilePlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert, Eject, Settings, Network, Terminal } from '@lucide/svelte';
   import FileIcon from './lib/FileIcon.svelte';
   import FileThumbnail from './lib/FileThumbnail.svelte';
   import NameDialog from './lib/NameDialog.svelte';
@@ -106,7 +106,7 @@
   let request = 0;
   let notice = $state<{ text: string; error: boolean } | null>(null);
   let noticeTimeout: ReturnType<typeof setTimeout>;
-  let dialog = $state<{ mode: 'create' | 'rename'; entry?: FileEntry } | null>(null);
+  let dialog = $state<{ mode: 'create' | 'create-file' | 'rename'; entry?: FileEntry } | null>(null);
   let dialogError = $state('');
   let transferConflict = $state<{ paths: string[]; resolve: (choice: 'replace' | 'keep' | 'cancel') => void } | null>(null);
 
@@ -141,6 +141,7 @@
   let context = $state<{ x: number; y: number } | null>(null);
   let sugarAvailable = $state(false);
   let sugarMenuOpen = $state(false);
+  let openElsewhereMenuOpen = $state(false);
   let sugarRequest = 0;
   let optionsOpen = $state(false);
   let preview = $state<FileEntry | null>(null);
@@ -508,7 +509,7 @@
     preview = entry;
   }
 
-  function openDialog(mode: 'create' | 'rename') {
+  function openDialog(mode: 'create' | 'create-file' | 'rename') {
     if (busy || !directory || (mode === 'rename' && !focused)) return;
     context = null;
     optionsOpen = false;
@@ -521,8 +522,8 @@
     operating = true;
     dialogError = '';
     try {
-      const path = dialog.mode === 'create' ? await api.create(directory.path, name) : await api.rename(dialog.entry!.path, name);
-      const message = dialog.mode === 'create' ? '文件夹已创建' : '名称已更新';
+      const path = dialog.mode === 'create' ? await api.create(directory.path, name) : dialog.mode === 'create-file' ? await api.createFile(directory.path, name) : await api.rename(dialog.entry!.path, name);
+      const message = dialog.mode === 'create' ? '文件夹已创建' : dialog.mode === 'create-file' ? '文件已创建' : '名称已更新';
       dialog = null;
       operating = false;
       await navigate(directory.path, undefined, true);
@@ -781,6 +782,7 @@
     optionsOpen = false;
     sugarAvailable = false;
     sugarMenuOpen = false;
+    openElsewhereMenuOpen = false;
     const request = ++sugarRequest;
     if (directory && desktop) void api.sugarAvailable().then((available) => { if (request === sugarRequest && context) sugarAvailable = available; }).catch(() => {});
     context = { x: Math.max(8, Math.min(event.clientX, innerWidth - 220)), y: Math.max(8, Math.min(event.clientY, innerHeight - 450)) };
@@ -960,7 +962,7 @@
         <section class="browser" aria-label="文件浏览器" data-drop-path={directory?.path}>
           <div class="folder-heading">
             <div class="folder-title"><span class="eyebrow">我的空间 <span>/</span> {currentPlace?.id === 'home' ? 'HOME' : 'FILES'}</span><h1>{title}<span class="heading-dot">.</span></h1>{#if query}<p>{`“${query}” 的搜索结果`}</p>{/if}</div>
-            <button class="button primary create-button" onclick={() => openDialog('create')} disabled={busy || !directory}><FolderPlus size={17} />新建文件夹</button>
+            <div class="create-actions"><button class="button create-button" onclick={() => openDialog('create-file')} disabled={busy || !directory}><FilePlus size={17} />新建文件</button><button class="button primary create-button" onclick={() => openDialog('create')} disabled={busy || !directory}><FolderPlus size={17} />新建文件夹</button></div>
           </div>
 
           <div class="file-toolbar">
@@ -1055,12 +1057,18 @@
     {#if focused && !isImage(focused) && canPreview(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览</span><kbd>Space</kbd></button>{/if}
     {#if focused && !isImage(focused)}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>打开</span><kbd>Enter</kbd></button>{/if}
     {#if desktop && focused && !focused.isDir}<button role="menuitem" onclick={() => void openWith(focused!)}><ExternalLink size={16} /><span>选择其他应用打开…</span></button>{/if}
-    {#if focused?.isDir}<button role="menuitem" onclick={() => { const path = focused!.path; context = null; newTab(path); }}><FolderPlus size={16} /><span>在新标签页中打开</span></button><button role="menuitem" onclick={() => void openInWindow(focused!.path)}><ExternalLink size={16} /><span>在新窗口中打开</span></button>{/if}
-    {#if directory && (focused?.isDir || selected.size === 0)}<button role="menuitem" onclick={() => void openTerminal(focused?.isDir ? focused.path : directory!.path)}><Terminal size={16} /><span>在终端中打开</span></button>{/if}
+    {#if directory && (focused?.isDir || selected.size === 0)}
+      <button role="menuitem" aria-haspopup="menu" aria-expanded={openElsewhereMenuOpen} onclick={(event) => { event.stopPropagation(); openElsewhereMenuOpen = !openElsewhereMenuOpen; sugarMenuOpen = false; }} onmouseenter={() => { openElsewhereMenuOpen = true; sugarMenuOpen = false; }} onkeydown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openElsewhereMenuOpen = true; sugarMenuOpen = false; void tick().then(() => document.querySelector<HTMLButtonElement>('.open-elsewhere-submenu button')?.focus()); } }}><ExternalLink size={16} /><span>在其他地方打开</span><ChevronRight size={14} /></button>
+      {#if openElsewhereMenuOpen}<div class="context-submenu open-elsewhere-submenu" role="menu" aria-label="在其他地方打开">
+        <button role="menuitem" onclick={() => { const path = focused?.isDir ? focused.path : directory!.path; context = null; newTab(path); }}><FolderPlus size={16} /><span>在新标签页中打开</span></button>
+        <button role="menuitem" onclick={() => void openInWindow(focused?.isDir ? focused.path : directory!.path)}><ExternalLink size={16} /><span>在新窗口中打开</span></button>
+        <button role="menuitem" onclick={() => void openTerminal(focused?.isDir ? focused.path : directory!.path)}><Terminal size={16} /><span>在终端中打开</span></button>
+      </div>{/if}
+    {/if}
     {#if sugarAvailable && (selected.size || directory)}
       <div class="menu-divider"></div>
-      <button role="menuitem" aria-haspopup="menu" aria-expanded={sugarMenuOpen} onclick={(event) => { event.stopPropagation(); sugarMenuOpen = !sugarMenuOpen; }} onmouseenter={() => sugarMenuOpen = true}><FileText size={16} /><span>解压缩</span><ChevronRight size={14} /></button>
-      {#if sugarMenuOpen}<div class="archive-submenu" role="menu" aria-label="解压缩">
+      <button role="menuitem" aria-haspopup="menu" aria-expanded={sugarMenuOpen} onclick={(event) => { event.stopPropagation(); sugarMenuOpen = !sugarMenuOpen; openElsewhereMenuOpen = false; }} onmouseenter={() => { sugarMenuOpen = true; openElsewhereMenuOpen = false; }}><FileText size={16} /><span>解压缩</span><ChevronRight size={14} /></button>
+      {#if sugarMenuOpen}<div class="context-submenu archive-submenu" role="menu" aria-label="解压缩">
         {#if archiveSelected}<button role="menuitem" onclick={() => void runSugar('extract')}><Folder size={16} /><span>解压到当前文件夹</span></button><button role="menuitem" onclick={() => void runSugar('extract-folder')}><FolderPlus size={16} /><span>解压到同名文件夹</span></button>{/if}
         <button role="menuitem" onclick={() => void runSugar('compress')}><FileText size={16} /><span>{selected.size ? '快速压缩为 ZIP' : '快速压缩当前文件夹'}</span></button>
         <button role="menuitem" onclick={() => void runSugar('custom')}><ExternalLink size={16} /><span>使用 Sugar 自定义压缩…</span></button>
@@ -1069,6 +1077,7 @@
     {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{shortcutModifier} C</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{shortcutModifier} X</kbd></button><button role="menuitem" onclick={() => copyPath('selection')}><Link2 size={16} /><span>{selected.size > 1 ? '复制项目地址' : focused?.isDir ? '复制文件夹地址' : '复制文件地址'}</span></button>{/if}
     <button role="menuitem" onclick={paste} disabled={busy || (!desktop && !clipboard)}><ClipboardPaste size={16} /><span>粘贴</span><kbd>{shortcutModifier} V</kbd></button>
     <div class="menu-divider"></div>
+    <button role="menuitem" onclick={() => openDialog('create-file')}><FilePlus size={16} /><span>新建文件</span></button>
     <button role="menuitem" onclick={() => openDialog('create')}><FolderPlus size={16} /><span>新建文件夹</span></button>
     {#if selected.size === 1}<button role="menuitem" onclick={() => openDialog('rename')}><Pencil size={16} /><span>重命名</span><kbd>F2</kbd></button>{/if}
     {#if !selected.size}<button role="menuitem" onclick={() => copyPath('directory')}><Link2 size={16} /><span>复制当前文件夹地址</span></button>{/if}

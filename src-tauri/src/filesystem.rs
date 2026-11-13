@@ -389,6 +389,23 @@ pub fn create_folder(parent: &str, name: &str) -> Result<String> {
     Ok(display(&path))
 }
 
+pub fn create_file(parent: &str, name: &str) -> Result<String> {
+    validate_name(name)?;
+    let path = resolve_directory(parent)?.join(name);
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| {
+            if error.kind() == io::ErrorKind::AlreadyExists {
+                "已存在同名项目，请使用其他名称".to_string()
+            } else {
+                io_error("无法创建文件", &path, error)
+            }
+        })?;
+    Ok(display(&path))
+}
+
 fn checked_source(path: &str) -> Result<PathBuf> {
     let path = PathBuf::from(path);
     if !path.is_absolute() || path.file_name().is_none() {
@@ -997,6 +1014,32 @@ mod tests {
             assert!(validate_name(name).is_err(), "accepted {name:?}");
         }
         assert!(validate_name("设计资料 2026").is_ok());
+    }
+
+    #[test]
+    fn create_file_is_empty_validated_and_never_overwrites() {
+        let dir = tempdir().unwrap();
+        let parent = display(dir.path());
+        let path = create_file(&parent, "新建 文件.txt").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"");
+        fs::write(&path, b"keep").unwrap();
+        assert!(create_file(&parent, "新建 文件.txt")
+            .unwrap_err()
+            .contains("同名"));
+        assert_eq!(fs::read(&path).unwrap(), b"keep");
+        fs::create_dir(dir.path().join("folder")).unwrap();
+        assert!(create_file(&parent, "folder").is_err());
+        assert!(create_file(&parent, "../outside").is_err());
+        assert!(create_file(&parent, "CON.txt").is_err());
+        assert!(create_file(&parent, "no-extension").is_ok());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("missing", dir.path().join("broken")).unwrap();
+            assert!(create_file(&parent, "broken").is_err());
+            assert!(fs::symlink_metadata(dir.path().join("broken"))
+                .unwrap()
+                .is_symlink());
+        }
     }
 
     #[test]

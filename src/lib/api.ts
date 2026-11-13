@@ -61,6 +61,7 @@ export const api = {
     return total;
   },
   create: (parent: string, name: string) => call<string>('create_folder', { parent, name }),
+  createFile: (parent: string, name: string) => call<string>('create_file', { parent, name }),
   rename: (path: string, name: string) => call<string>('rename_entry', { path, name }),
   transferConflicts: (paths: string[], destination: string) => call<string[]>('transfer_conflicts', { paths, destination }),
   transfer: (paths: string[], destination: string, mode: 'copy' | 'cut', policy: 'reject' | 'replace' | 'keep' = 'reject', confirmed: string[] = []) => call<string[]>('transfer_entries', { paths, destination, mode, policy, confirmed }),

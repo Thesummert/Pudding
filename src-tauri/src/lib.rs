@@ -238,6 +238,11 @@ async fn create_folder(parent: String, name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn create_file(parent: String, name: String) -> Result<String, String> {
+    blocking(move || filesystem::create_file(&parent, &name)).await
+}
+
+#[tauri::command]
 async fn rename_entry(path: String, name: String) -> Result<String, String> {
     blocking(move || filesystem::rename_entry(&path, &name)).await
 }
@@ -432,6 +437,7 @@ pub fn run() {
             read_preview_file,
             prepare_video_preview,
             create_folder,
+            create_file,
             rename_entry,
             transfer_entries,
             transfer_conflicts,
