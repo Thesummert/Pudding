@@ -46,7 +46,7 @@ pub struct AppInfo {
     roots: Vec<crate::volumes::Volume>,
 }
 
-fn display(path: &Path) -> String {
+pub(crate) fn display(path: &Path) -> String {
     // Canonical Windows paths may use a verbatim prefix. Keep that prefix internally
     // for long-path support, but present ordinary paths to the webview and user.
     let text = path.to_string_lossy();

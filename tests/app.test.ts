@@ -597,7 +597,7 @@ describe('file manager interactions', () => {
     trigger.dispatchEvent(new MouseEvent('mouseenter'));
     await tick();
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
-    expect(host.querySelectorAll('.open-elsewhere-submenu [role="menuitem"]')).toHaveLength(3);
+    expect(host.querySelectorAll('.open-elsewhere-submenu [role="menuitem"]')).toHaveLength(4);
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await contextMenu('Documents');
     expect(menuItem('在其他地方打开').getAttribute('aria-expanded')).toBe('false');
@@ -612,6 +612,24 @@ describe('file manager interactions', () => {
     expect(openWindow).toHaveBeenLastCalledWith('/home/pudding');
     await contextMenu('开始使用.md');
     expect([...host.querySelectorAll('[role="menuitem"]')].some((item) => item.textContent?.includes('在其他地方打开'))).toBe(false);
+  });
+
+  it('opens the selected or current folder in the system file manager', async () => {
+    const open = vi.spyOn(api, 'openSystemFileManager').mockResolvedValue();
+    await contextMenu('Documents');
+    await click(menuItem('在其他地方打开'));
+    await click(menuItem('在系统文件管理器中打开'));
+    expect(open).toHaveBeenCalledWith('/home/pudding/Documents');
+    host.querySelector('.file-area')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await tick();
+    await click(menuItem('在其他地方打开'));
+    await click(menuItem('在系统文件管理器中打开'));
+    expect(open).toHaveBeenLastCalledWith('/home/pudding');
+    open.mockRejectedValueOnce(new Error('启动失败'));
+    await contextMenu('Documents');
+    await click(menuItem('在其他地方打开'));
+    await click(menuItem('在系统文件管理器中打开'));
+    await vi.waitFor(() => expect(host.querySelector('[role="alert"]')?.textContent).toContain('启动失败'));
   });
 
   it('keeps navigation history separate across tabs and closes the active tab', async () => {

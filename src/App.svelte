@@ -495,6 +495,12 @@
     catch (error) { notify(errorMessage(error), true); }
   }
 
+  async function openSystemFileManager(path: string) {
+    context = null;
+    try { await api.openSystemFileManager(path); }
+    catch (error) { notify(errorMessage(error), true); }
+  }
+
   async function chooseTerminal() {
     try {
       const path = await api.chooseTerminal();
@@ -1063,6 +1069,7 @@
         <button role="menuitem" onclick={() => { const path = focused?.isDir ? focused.path : directory!.path; context = null; newTab(path); }}><FolderPlus size={16} /><span>在新标签页中打开</span></button>
         <button role="menuitem" onclick={() => void openInWindow(focused?.isDir ? focused.path : directory!.path)}><ExternalLink size={16} /><span>在新窗口中打开</span></button>
         <button role="menuitem" onclick={() => void openTerminal(focused?.isDir ? focused.path : directory!.path)}><Terminal size={16} /><span>在终端中打开</span></button>
+        <button role="menuitem" onclick={() => void openSystemFileManager(focused?.isDir ? focused.path : directory!.path)}><Folder size={16} /><span>在系统文件管理器中打开</span></button>
       </div>{/if}
     {/if}
     {#if sugarAvailable && (selected.size || directory)}

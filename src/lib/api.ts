@@ -68,6 +68,7 @@ export const api = {
   trash: (paths: string[]) => call<void>('trash_entries', { paths }),
   delete: (paths: string[]) => call<void>('delete_entries', { paths }),
   open: (path: string) => call<void>('open_entry', { path }),
+  openSystemFileManager: (path: string) => desktop ? invoke<void>('open_system_file_manager', { path }) : Promise.reject(new Error('浏览器演示无法打开系统文件管理器。')),
   listOpenApps: (path: string) => desktop ? invoke<{ id: string; name: string }[]>('list_open_apps', { path }) : Promise.resolve([]),
   openWith: (path: string, application: string | null = null) => desktop ? invoke<void>('open_entry_with', { path, application }) : Promise.reject(new Error('浏览器演示无法启动本地应用。')),
   sugarAvailable: () => desktop ? invoke<boolean>('sugar_available') : Promise.resolve(false),

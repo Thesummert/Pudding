@@ -1,4 +1,5 @@
 mod clipboard;
+mod file_manager;
 mod filesystem;
 mod open_requests;
 mod open_with;
@@ -294,6 +295,11 @@ async fn open_entry(app: tauri::AppHandle, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn open_system_file_manager(path: String) -> Result<(), String> {
+    blocking(move || file_manager::open(&path)).await
+}
+
+#[tauri::command]
 async fn list_open_apps(path: String) -> Result<Vec<open_with::Application>, String> {
     blocking(move || open_with::list(&path)).await
 }
@@ -444,6 +450,7 @@ pub fn run() {
             trash_entries,
             delete_entries,
             open_entry,
+            open_system_file_manager,
             open_entry_with,
             list_open_apps,
             sugar_available,
