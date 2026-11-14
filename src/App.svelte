@@ -652,7 +652,7 @@
     if (modifiers.ctrl !== modifiers.shift) {
       void receiveDrop(sources, destination, modifiers.ctrl ? 'copy' : 'cut');
     } else {
-      dropMenu = { sources, destination, x: Math.max(8, Math.min(position.x, innerWidth - 220)), y: Math.max(8, Math.min(position.y, innerHeight - 120)) };
+      dropMenu = { sources, destination, x: position.x, y: position.y };
     }
   }
 
@@ -806,6 +806,18 @@
     finally { operating = false; if (action !== 'custom') refresh(); }
   }
 
+  function fitMenu(node: HTMLElement, anchor: { x: number; y: number }) {
+    const position = () => {
+      node.style.left = `${Math.max(8, Math.min(anchor.x, window.innerWidth - node.offsetWidth - 8))}px`;
+      node.style.top = `${Math.max(8, Math.min(anchor.y, window.innerHeight - node.offsetHeight - 8))}px`;
+    };
+    position();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(position);
+    observer?.observe(node);
+    window.addEventListener('resize', position);
+    return { destroy() { observer?.disconnect(); window.removeEventListener('resize', position); } };
+  }
+
   function contextMenu(event: MouseEvent, entry?: FileEntry) {
     event.preventDefault();
     event.stopPropagation();
@@ -819,7 +831,7 @@
     openElsewhereMenuOpen = false;
     const request = ++sugarRequest;
     if (directory && desktop) void api.sugarAvailable().then((available) => { if (request === sugarRequest && context) sugarAvailable = available; }).catch(() => {});
-    context = { x: Math.max(8, Math.min(event.clientX, innerWidth - 220)), y: Math.max(8, Math.min(event.clientY, innerHeight - 450)) };
+    context = { x: event.clientX, y: event.clientY };
   }
 
   function saveFolderDisplay() {
@@ -1093,13 +1105,13 @@
 
   {#if marquee?.active}<div class="selection-marquee" aria-hidden="true" style={`left: ${Math.min(marquee.startX, marquee.x)}px; top: ${Math.min(marquee.startY, marquee.y)}px; width: ${Math.abs(marquee.x - marquee.startX)}px; height: ${Math.abs(marquee.y - marquee.startY)}px`}></div>{/if}
 
-  {#if dropMenu}<div class="context-menu drop-menu" role="menu" aria-label="选择拖放操作" style={`left: ${dropMenu.x}px; top: ${dropMenu.y}px`}>
+  {#if dropMenu}<div class="context-menu drop-menu" role="menu" aria-label="选择拖放操作" use:fitMenu={dropMenu}>
     <button role="menuitem" onclick={() => confirmDrop('copy')}><Copy size={16} /><span>复制到此处</span><kbd>Ctrl</kbd></button>
     <button role="menuitem" onclick={() => confirmDrop('cut')}><Scissors size={16} /><span>移动到此处</span><kbd>Shift</kbd></button>
     <button role="menuitem" onclick={() => dropMenu = null}><X size={16} /><span>取消</span><kbd>Esc</kbd></button>
   </div>{/if}
 
-  {#if context}{#key context}<div class="context-menu" role="menu" style={`left: ${context.x}px; top: ${context.y}px`}>
+  {#if context}{#key context}<div class="context-menu" role="menu" use:fitMenu={context}>
     {#if focused && isImage(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览图片</span><kbd>Space</kbd></button><button role="menuitem" onclick={() => { context = null; void openExternal(focused!); }}><ExternalLink size={16} /><span>使用默认应用打开</span></button>{/if}
     {#if focused && !canPreview(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Info size={16} /><span>查看基本信息</span><kbd>Space</kbd></button>{/if}
     {#if focused && !isImage(focused) && canPreview(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览</span><kbd>Space</kbd></button>{/if}
