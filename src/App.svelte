@@ -17,17 +17,61 @@
   import { dragClientPosition } from './lib/drag';
   import { virtualWindow } from './lib/virtual-list';
   import { transferEstimate } from './lib/transfer-progress';
+  import { backgrounds, type BackgroundImage } from './lib/backgrounds';
 
-  type Preferences = { view: ViewMode; hidden: boolean; inspector: boolean; size: number; dark: boolean; terminal: string; customTerminal: string };
+  type Preferences = { view: ViewMode; hidden: boolean; inspector: boolean; size: number; dark: boolean; terminal: string; customTerminal: string; backgroundId: string; backgroundBlur: number; backgroundOpacity: number; backgroundRandomChance: number };
   function loadPreferences(): Preferences {
-    const defaults: Preferences = { view: 'grid', hidden: false, inspector: true, size: 120, dark: false, terminal: 'system', customTerminal: '' };
+    const defaults: Preferences = { view: 'grid', hidden: false, inspector: true, size: 120, dark: false, terminal: 'system', customTerminal: '', backgroundId: '', backgroundBlur: 0, backgroundOpacity: 25, backgroundRandomChance: 50 };
     try {
       const saved = JSON.parse(localStorage.getItem('pudding.preferences') || '{}');
-      return { view: saved.view === 'list' ? 'list' : 'grid', hidden: saved.hidden === true, inspector: saved.inspector !== false, size: Number.isFinite(saved.size) && saved.size >= 104 && saved.size <= 168 ? saved.size : 120, dark: saved.dark === true, terminal: typeof saved.terminal === 'string' ? saved.terminal : 'system', customTerminal: typeof saved.customTerminal === 'string' ? saved.customTerminal : '' };
+      return { view: saved.view === 'list' ? 'list' : 'grid', hidden: saved.hidden === true, inspector: saved.inspector !== false, size: Number.isFinite(saved.size) && saved.size >= 104 && saved.size <= 168 ? saved.size : 120, dark: saved.dark === true, terminal: typeof saved.terminal === 'string' ? saved.terminal : 'system', customTerminal: typeof saved.customTerminal === 'string' ? saved.customTerminal : '', backgroundId: typeof saved.backgroundId === 'string' ? saved.backgroundId : '', backgroundBlur: Number.isFinite(saved.backgroundBlur) ? Math.max(0, Math.min(30, saved.backgroundBlur)) : 0, backgroundOpacity: Number.isFinite(saved.backgroundOpacity) ? Math.max(0, Math.min(100, saved.backgroundOpacity)) : 25, backgroundRandomChance: Number.isFinite(saved.backgroundRandomChance) ? Math.max(0, Math.min(100, saved.backgroundRandomChance)) : 50 };
     } catch { return defaults; }
   }
 
   let preferences = $state(loadPreferences());
+  let backgroundImages = $state<Array<BackgroundImage & { url: string }>>([]);
+  let backgroundError = $state('');
+  let backgroundUrl = $derived(backgroundImages.find((image) => image.id === preferences.backgroundId)?.url ?? '');
+  onMount(() => {
+    let alive = true;
+    void backgrounds.list().then((images) => {
+      if (alive) {
+        const currentIds = new Set(backgroundImages.map((image) => image.id));
+        backgroundImages = [...backgroundImages, ...images.filter((image) => !currentIds.has(image.id)).map((image) => ({ ...image, url: URL.createObjectURL(image.image) }))];
+        if (preferences.backgroundId && Math.random() * 100 < preferences.backgroundRandomChance) chooseRandomBackground();
+      }
+    }).catch(() => { if (alive) backgroundError = '无法读取背景图片列表。'; });
+    return () => { alive = false; for (const image of backgroundImages) URL.revokeObjectURL(image.url); };
+  });
+  async function addBackgrounds(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    input.value = '';
+    backgroundError = '';
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) { backgroundError = '请选择图片文件。'; continue; }
+      const image = { id: crypto.randomUUID(), name: file.name, image: file };
+      try {
+        await backgrounds.add(image);
+        backgroundImages = [...backgroundImages, { ...image, url: URL.createObjectURL(file) }];
+        if (!preferences.backgroundId) preferences.backgroundId = image.id;
+      } catch { backgroundError = '保存图片失败，请检查可用存储空间。'; break; }
+    }
+  }
+  async function removeBackground(image: BackgroundImage & { url: string }) {
+    try {
+      await backgrounds.remove(image.id);
+      backgroundImages = backgroundImages.filter((item) => item.id !== image.id);
+      if (preferences.backgroundId === image.id) preferences.backgroundId = '';
+      URL.revokeObjectURL(image.url);
+      backgroundError = '';
+    } catch { backgroundError = '删除背景图片失败。'; }
+  }
+  function chooseRandomBackground() {
+    const alternatives = backgroundImages.filter((image) => image.id !== preferences.backgroundId);
+    const choices = alternatives.length ? alternatives : backgroundImages;
+    if (choices.length) preferences.backgroundId = choices[Math.floor(Math.random() * choices.length)].id;
+  }
   function loadPinnedFolders(): string[] {
     try {
       const saved: unknown = JSON.parse(localStorage.getItem('pudding.pinnedFolders') || '[]');
@@ -926,7 +970,8 @@
 
 <svelte:window onmousedown={mouseNavigation} onauxclick={(event) => { if (event.button === 3 || event.button === 4) event.preventDefault(); }} onfocus={() => { void syncClipboard(); void refreshVolumes(); }} onpointermove={pointerMove} onpointerup={(event) => { dragGesture = null; endMarquee(event); }} onpointercancel={(event) => { dragGesture = null; endMarquee(event, true); }} ondragover={demoDragOver} ondrop={demoDrop} ondragend={() => { demoDrag = null; dropTarget = null; }} ondragleave={(event) => { if (!event.relatedTarget) dropTarget = null; }} onkeydown={keydown} onkeyup={(event) => { dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey }; shiftHeld = event.shiftKey; }} onclick={() => { context = null; optionsOpen = false; dropMenu = null; }} onblur={() => { context = null; optionsOpen = false; dragGesture = null; dropTarget = null; shiftHeld = false; if (marquee) selected = new Set(marquee.initial); marquee = null; }} onresize={() => context = null} />
 
-<div class="app-shell" data-theme={preferences.dark ? 'dark' : 'light'}>
+<div class="app-shell" class:has-background={!!backgroundUrl} data-theme={preferences.dark ? 'dark' : 'light'}>
+  {#if backgroundUrl}<div class="window-background" aria-hidden="true"><img src={backgroundUrl} alt="" style={`filter: blur(${preferences.backgroundBlur}px); opacity: ${preferences.backgroundOpacity / 100}`} /></div>{/if}
   <header class="app-header">
     <a class="brand" href="#home" onclick={(event) => { event.preventDefault(); if (info && !busy) void navigate(info.home); }} aria-label="Pudding 主文件夹">
       <span class="brand-mark"><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M6 11a2 2 0 0 1 2-2h7l3 3h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V11Z" fill="white" opacity=".95"/><path d="M6 16h21v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-8Z" fill="#b9d2ff"/></svg></span>
@@ -1170,14 +1215,33 @@
     <div class="modal-top"><span class="modal-icon"><Settings size={24} /></span><button class="icon-button" title="关闭设置" aria-label="关闭设置" onclick={() => settingsDialog.close()}><X size={18} /></button></div>
     <h2 id="settings-title">设置</h2><p>调整文件浏览的外观与显示方式，修改会自动保存。</p>
     <div class="settings-list">
+      <h3 class="settings-section">外观与背景</h3>
       <label class="settings-row"><span><strong>外观</strong><small>选择浅色或深色界面</small></span><select aria-label="外观" value={preferences.dark ? 'dark' : 'light'} onchange={(event) => preferences.dark = event.currentTarget.value === 'dark'}><option value="light">浅色</option><option value="dark">深色</option></select></label>
+      <div class="settings-row"><span><strong>背景图片</strong><small>图片保存在本机，可添加多张并选择一张使用</small></span><label class="button background-add">添加图片…<input type="file" accept="image/*" multiple onchange={addBackgrounds} /></label></div>
+      {#if backgroundImages.length}
+        <div class="background-list" aria-label="背景图片列表">
+          <div class="background-list-actions"><button type="button" class:active={!preferences.backgroundId} aria-pressed={!preferences.backgroundId} onclick={() => preferences.backgroundId = ''}>不使用背景</button><button type="button" onclick={chooseRandomBackground}>随机选择</button></div>
+          {#each backgroundImages as image (image.id)}
+            <div class="background-item" class:active={preferences.backgroundId === image.id}>
+              <button type="button" class="background-choice" aria-label={`使用背景 ${image.name}`} aria-pressed={preferences.backgroundId === image.id} onclick={() => preferences.backgroundId = image.id}><img src={image.url} alt="" /><span title={image.name}>{image.name}</span></button>
+              <button type="button" class="icon-button compact" aria-label={`移除背景 ${image.name}`} title="移除图片" onclick={() => void removeBackground(image)}><X size={15} /></button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+      {#if backgroundError}<p class="background-error" role="alert">{backgroundError}</p>{/if}
+      <label class="settings-row"><span><strong>高斯模糊</strong><small>{preferences.backgroundBlur} px</small></span><input type="range" aria-label="背景高斯模糊" min="0" max="30" step="1" bind:value={preferences.backgroundBlur} /></label>
+      <label class="settings-row"><span><strong>背景不透明度</strong><small>{preferences.backgroundOpacity}%</small></span><input type="range" aria-label="背景不透明度" min="0" max="100" step="1" bind:value={preferences.backgroundOpacity} /></label>
+      <label class="settings-row"><span><strong>启动时随机切换</strong><small>每次启动的切换概率：{preferences.backgroundRandomChance}%</small></span><input type="range" aria-label="启动时随机切换概率" min="0" max="100" step="5" bind:value={preferences.backgroundRandomChance} /></label>
+      <h3 class="settings-section">文件显示</h3>
       <label class="settings-row"><span><strong>显示方式</strong><small>选择文件的默认显示方式</small></span><select aria-label="显示方式" value={preferences.view} onchange={(event) => { preferences.view = event.currentTarget.value as ViewMode; if (!directory || !Object.hasOwn(folderDisplays, directory.path)) view = preferences.view; }}><option value="grid">图标</option><option value="list">列表</option></select></label>
       <div class="settings-row"><span><strong>文件夹显示与排序记录</strong><small>清理各文件夹保存的显示方式和排序方式</small></span><button class="button" type="button" onclick={clearFolderDisplays}>清理记录</button></div>
-      <label class="settings-row"><span><strong>默认终端</strong><small>选择打开文件夹时使用的终端</small></span><select aria-label="默认终端" bind:value={preferences.terminal}><option value="system">系统终端</option>{#if info?.platform === 'macos'}<option value="terminal">终端</option><option value="iterm">iTerm</option><option value="warp">Warp</option>{:else if info?.platform === 'windows'}<option value="windows-terminal">Windows Terminal</option><option value="powershell">PowerShell</option><option value="cmd">命令提示符</option>{:else if info?.platform === 'linux'}<option value="gnome-terminal">GNOME Terminal</option><option value="konsole">Konsole</option><option value="xfce4-terminal">Xfce Terminal</option><option value="xterm">XTerm</option>{/if}<option value="custom" disabled={!preferences.customTerminal}>自选应用{preferences.customTerminal ? `：${basename(preferences.customTerminal)}` : ''}</option></select></label>
-      <div class="settings-row"><span><strong>终端应用</strong><small title={preferences.customTerminal}>{preferences.customTerminal || '选择本机安装的终端应用'}</small></span><button class="button" type="button" onclick={chooseTerminal}>选择应用…</button></div>
       <label class="settings-row"><span><strong>显示隐藏文件</strong><small>在文件夹中显示隐藏项目</small></span><input type="checkbox" bind:checked={preferences.hidden} /></label>
       <label class="settings-row"><span><strong>显示信息面板</strong><small>显示所选项目的详细信息</small></span><input type="checkbox" bind:checked={preferences.inspector} /></label>
       <label class="settings-row"><span><strong>图标大小</strong><small>调整图标视图中的项目大小</small></span><input type="range" min="104" max="168" step="1" bind:value={preferences.size} /></label>
+      <h3 class="settings-section">终端</h3>
+      <label class="settings-row"><span><strong>默认终端</strong><small>选择打开文件夹时使用的终端</small></span><select aria-label="默认终端" bind:value={preferences.terminal}><option value="system">系统终端</option>{#if info?.platform === 'macos'}<option value="terminal">终端</option><option value="iterm">iTerm</option><option value="warp">Warp</option>{:else if info?.platform === 'windows'}<option value="windows-terminal">Windows Terminal</option><option value="powershell">PowerShell</option><option value="cmd">命令提示符</option>{:else if info?.platform === 'linux'}<option value="gnome-terminal">GNOME Terminal</option><option value="konsole">Konsole</option><option value="xfce4-terminal">Xfce Terminal</option><option value="xterm">XTerm</option>{/if}<option value="custom" disabled={!preferences.customTerminal}>自选应用{preferences.customTerminal ? `：${basename(preferences.customTerminal)}` : ''}</option></select></label>
+      <div class="settings-row"><span><strong>终端应用</strong><small title={preferences.customTerminal}>{preferences.customTerminal || '选择本机安装的终端应用'}</small></span><button class="button" type="button" onclick={chooseTerminal}>选择应用…</button></div>
     </div>
     <div class="modal-actions"><button class="button" onclick={() => settingsDialog.close()}>完成</button></div>
   </dialog>

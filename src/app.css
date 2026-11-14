@@ -50,6 +50,8 @@ kbd { font-family: inherit; font-size: 10px; font-weight: 450; white-space: nowr
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+  isolation: isolate;
 }
 
 .app-shell[data-theme='dark'] {
@@ -87,7 +89,11 @@ kbd { font-family: inherit; font-size: 10px; font-weight: 450; white-space: nowr
 .icon-button:not(:disabled):active, .button:not(:disabled):active { transform: scale(.96); }
 .icon-button.active { background: var(--accent-soft); color: var(--accent); }
 .icon-button.compact { width: 28px; height: 28px; }
-.workspace { display: flex; flex: 1; min-height: 0; }
+.workspace { display: flex; flex: 1; min-height: 0; position: relative; }
+.window-background { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.window-background img { position: absolute; inset: -30px; width: calc(100% + 60px); height: calc(100% + 60px); object-fit: cover; }
+.has-background .sidebar { background: color-mix(in srgb, var(--sidebar) 25%, transparent); }
+.has-background .inspector, .has-background .status-bar, .has-background .transfer-tasks { background: color-mix(in srgb, var(--surface) 20%, transparent); }
 .sidebar { width: 210px; min-width: 210px; background: var(--sidebar); border-right: 1px solid var(--line); display: flex; flex-direction: column; user-select: none; }
 .sidebar-scroll { overflow-y: auto; padding: 28px 15px 0; flex: 1; }
 .section-label { display: flex; justify-content: space-between; padding: 0 13px; margin-bottom: 13px; color: var(--secondary); font-size: 10px; font-weight: 600; letter-spacing: 1px; }
@@ -343,6 +349,20 @@ h1 { margin: 4px 0 3px; font-size: 22px; color: var(--heading); letter-spacing: 
 .smb-history-address { flex: 1; min-width: 0; padding: 8px 0; color: var(--accent); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-modal { width: 480px; max-height: calc(100dvh - 40px); overflow-y: auto; }
 .settings-list { border-top: 1px solid var(--line); }
+.settings-section { margin: 20px 0 0; color: var(--heading); font-size: 13px; }
+.background-add { cursor: pointer; }
+.background-add input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.background-add:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
+.background-list { display: flex; flex-direction: column; gap: 5px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.background-list-actions { display: flex; gap: 6px; }
+.background-list-actions button { padding: 6px 8px; border-radius: 5px; font-size: 11px; }
+.background-list-actions button:hover { background: var(--surface-hover); }
+.background-list-actions button.active, .background-item.active { background: var(--accent-soft); color: var(--accent); }
+.background-item { display: flex; align-items: center; border-radius: 6px; padding: 3px; }
+.background-choice { display: flex; align-items: center; flex: 1; min-width: 0; gap: 10px; text-align: left; font-size: 11px; }
+.background-choice img { width: 52px; height: 34px; object-fit: cover; border-radius: 4px; }
+.background-choice span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-modal .background-error { margin: 8px 0; color: var(--danger); font-size: 11px; }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--line); }
 .settings-row > span { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .settings-row strong { color: var(--heading); font-size: 12px; font-weight: 600; }
