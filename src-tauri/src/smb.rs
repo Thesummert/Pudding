@@ -196,14 +196,19 @@ fn linux_connect(url: &Url, username: &str, password: &str) -> Result<Vec<String
 
 #[cfg(target_os = "linux")]
 fn gvfs_path(url: &Url) -> Result<String, String> {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .ok_or("未设置 XDG_RUNTIME_DIR，无法访问 GVfs 挂载目录")?;
+    gvfs_path_in(url, &std::path::Path::new(&runtime).join("gvfs"))
+}
+
+#[cfg(target_os = "linux")]
+fn gvfs_path_in(url: &Url, mount_dir: &std::path::Path) -> Result<String, String> {
     use gtk::glib;
     let decode = |s: &str| glib::uri_unescape_string(s, None::<&str>).map(|v| v.to_string());
     let host = url.host_str().ok_or("缺少服务器地址")?;
     let mut segments = url.path_segments().ok_or("缺少共享名称")?;
     let share = decode(segments.next().unwrap_or_default()).ok_or("共享名称无效")?;
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-        .ok_or("未设置 XDG_RUNTIME_DIR，无法访问 GVfs 挂载目录")?;
-    let entries = std::fs::read_dir(std::path::Path::new(&runtime).join("gvfs"))
+    let entries = std::fs::read_dir(mount_dir)
         .map_err(|e| format!("无法读取 GVfs 挂载目录：{e}；请确认 gvfs-fuse 已运行"))?;
     let mut matches = Vec::new();
     for entry in entries.flatten() {
@@ -228,7 +233,9 @@ fn gvfs_path(url: &Url) -> Result<String, String> {
         if server
             .as_deref()
             .is_some_and(|s| s.eq_ignore_ascii_case(host))
-            && mounted_share.as_deref() == Some(&share)
+            && mounted_share
+                .as_deref()
+                .is_some_and(|s| s.to_lowercase() == share.to_lowercase())
             && port.unwrap_or(445) == url.port().unwrap_or(445)
         {
             matches.push(entry.path());
@@ -283,5 +290,23 @@ mod tests {
         assert!(!is_guest("alice", ""));
         assert!(!is_guest("", "password"));
         assert!(!is_guest("guest", "password"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn finds_gvfs_share_with_different_case_and_encoded_space() {
+        let dir = tempfile::tempdir().unwrap();
+        let mount = dir
+            .path()
+            .join("smb-share:server=192.168.0.1,share=u30%20air");
+        std::fs::create_dir(&mount).unwrap();
+        std::fs::create_dir(mount.join("Photos")).unwrap();
+        let url = Url::parse("smb://192.168.0.1/U30%20Air/Photos").unwrap();
+        assert_eq!(
+            gvfs_path_in(&url, dir.path()).unwrap(),
+            mount.join("Photos").to_str().unwrap()
+        );
+        let other = Url::parse("smb://192.168.0.1/another").unwrap();
+        assert!(gvfs_path_in(&other, dir.path()).is_err());
     }
 }
