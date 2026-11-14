@@ -58,6 +58,10 @@ npm run tauri build
 
 产物位于 `src-tauri/target/release/bundle/`。各操作系统的安装包应在对应系统上构建；发布到其他电脑前还需要根据平台设置签名与公证。
 
+### GitHub Actions 构建
+
+推送、提交拉取请求或手动运行 `Build desktop packages` 工作流时，会分别构建 Linux x64 的 DEB、macOS ARM64 的 DMG，以及 Windows x64 的 NSIS 和 MSI 安装包。构建完成后可在对应的 Actions 运行页面下载 artifacts。工作流不自动发布 Release；这些安装包未配置代码签名或 macOS 公证。
+
 ### Linux 和 Arch Linux 构建脚本
 
 在目标 Linux 系统及架构上安装 Node.js（20.19+ 或 22.12+）、Rust（1.91+）、C 编译器、pkg-config、GTK 3、WebKitGTK 4.1、OpenSSL 和相关开发依赖。Debian/Ubuntu 可安装 `build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev gvfs-backends gvfs-fuse`；Arch Linux 可安装 `base-devel curl wget file xdotool openssl libayatana-appindicator librsvg webkit2gtk-4.1 gvfs-smb nodejs npm rust`，并另行安装 Node.js、npm 和 Rust。AppImage 打包可能需要联网下载工具及 FUSE 支持。
