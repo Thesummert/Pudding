@@ -10,7 +10,7 @@
 - 自动刷新已挂载设备；可在侧栏安全推出系统支持的可移除磁盘。
 - 安装支持联动的新版 Sugar Archive 后，右键菜单“解压缩”中可快速压缩为 ZIP、在 Sugar 中自定义压缩，或将压缩包解压到当前文件夹或同名文件夹；在文件区空白处右键可压缩当前文件夹。需要重新构建并安装带 `sugar-archive-pudding` 辅助程序的 Sugar，旧版不会显示这些操作。文件名冲突不会覆盖；解压失败可能留下已解压文件。
 - 文件右键菜单可显示系统推荐的应用，也可手动选择其他应用打开文件；Linux 选择应用的可执行文件，macOS 选择 `.app`，Windows 选择 `.exe`。
-- macOS 和 Linux 可通过侧栏连接 SMB，输入服务器地址和账户后可在应用内选择共享，挂载后自动打开；成功连接的地址保存在最近连接中，密码不会保存。
+- Windows、macOS 和 Linux 可通过侧栏连接 SMB，输入服务器地址和账户后可在应用内选择共享，连接后自动打开；成功连接的地址保存在最近连接中，密码不会保存。
 - 桌面版递归搜索当前文件夹及其子文件夹，默认匹配文件名；可勾选「搜索内容」匹配文本文件，状态栏显示扫描数量。支持显示或隐藏隐藏文件。
 - 搜索时按需建立内存索引；监听当前文件夹及子文件夹的外部变更，自动刷新列表并使索引失效。
 - 多标签页浏览，每个标签保留独立的路径与导航历史；右键文件夹可在新标签页或新窗口中打开。
@@ -61,6 +61,19 @@ npm run tauri build
 ### GitHub Actions 构建
 
 推送、提交拉取请求或手动运行 `Build desktop packages` 工作流时，会分别构建 Linux x64 的 DEB、macOS ARM64 的 DMG，以及 Windows x64 的 NSIS 和 MSI 安装包。构建完成后可在对应的 Actions 运行页面下载 artifacts。工作流不自动发布 Release；这些安装包未配置代码签名或 macOS 公证。
+
+### Windows 构建脚本
+
+在 Windows 上安装 Node.js（20.19+ 或 22.12+）、Rust（1.91+，使用 MSVC 工具链）、Visual Studio C++ Build Tools、Windows SDK 和 WebView2。运行：
+
+```powershell
+npm run build:windows
+npm run build:windows -- --skip-install --bundles nsis
+npm run build:windows -- --bundles msi
+npm run build:windows -- --help
+```
+
+脚本默认运行 `npm ci`，并使用锁定的 Rust 依赖构建当前工具链架构的 Release NSIS 和 MSI 安装包。Tauri 会自动执行前端检查和构建；安装包分别位于 Cargo target 目录的 `release/bundle/nsis/` 和 `release/bundle/msi/`。首次打包可能需要联网下载打包工具，代码签名需另行配置。
 
 ### Linux 和 Arch Linux 构建脚本
 
@@ -171,7 +184,7 @@ tests/                   单元与端到端测试
 - 剪切使用文件系统重命名，不支持跨磁盘移动；可先复制，确认成功后再将源项目移入回收站。
 - 多项目操作可能部分成功，失败提示会说明已完成数量，界面会重新读取目录；暂未实现事务回滚、撤销和精确进度。
 - 图片预览支持 PNG、JPEG、GIF、WebP、SVG、AVIF、HEIC 和 BMP，实际解码能力取决于系统 WebView；不支持的格式或损坏文件在缩略图中回退为文件图标，信息面板和大图预览会显示错误提示。单张图片限制为 32 MB，较大的图片可使用默认应用打开。视频预览支持 MP4、M4V、MOV、MKV、AVI、WebM、MPEG 和 OGV，实际解码能力取决于系统 WebView。文本预览限 2 MB，PDF 预览限 64 MB；不支持的编码和过大的文件可使用默认应用打开。暂不提供其他文件内容预览或目录递归大小。
-- macOS 和 Linux 使用 SMB2/3 枚举共享并由系统挂载；Linux 需要 GVfs、SMB 后端和 FUSE（Arch 安装 `gvfs-smb`，Debian/Ubuntu 安装 `gvfs-backends` 和 `gvfs-fuse`），并需有正常运行的桌面用户会话。Windows 可浏览已由系统挂载且可通过本地路径访问的共享。双栏浏览和回收站浏览尚未实现。
+- SMB 使用 SMB2/3 枚举共享，并由系统建立连接。Linux 需要 GVfs、SMB 后端和 FUSE（Arch 安装 `gvfs-smb`，Debian/Ubuntu 安装 `gvfs-backends` 和 `gvfs-fuse`），并需有正常运行的桌面用户会话。Windows 支持主机名或 IPv4 地址及默认端口 445；如果系统已使用其他凭据连接同一服务器，需要先断开原连接。双栏浏览和回收站浏览尚未实现。
 
 桌面应用使用操作系统当前用户权限访问文件。渲染进程只加载本地内容，通过明确的 Rust 命令调用文件操作，CSP 禁止远程页面和脚本。
 

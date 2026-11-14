@@ -119,7 +119,11 @@ pub fn connect(address: &str, username: &str, password: &str) -> Result<Vec<Stri
     {
         linux_connect(&url, username, password)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
+    {
+        windows_connect(&url, username, password)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         let _ = (url, username, password);
         Err("当前系统不支持连接 SMB 共享".into())
@@ -132,8 +136,10 @@ pub async fn list_shares(
     password: &str,
 ) -> Result<Vec<String>, String> {
     let url = validate_address(address)?;
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     {
+        #[cfg(windows)]
+        windows_server(&url)?;
         let host = url.host().ok_or("请输入服务器地址")?;
         let server = format!("{}:{}", host, url.port().unwrap_or(445));
         let mut client = smb2::connect(&server, username, password)
@@ -145,11 +151,103 @@ pub async fn list_shares(
             .map_err(|e| format!("无法读取共享列表：{e}"))?;
         Ok(shares.into_iter().map(|share| share.name).collect())
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         let _ = (url, username, password);
         Err("当前系统不支持连接 SMB 共享".into())
     }
+}
+
+#[cfg(windows)]
+fn windows_server(url: &Url) -> Result<&str, String> {
+    if url.port().is_some_and(|port| port != 445) {
+        return Err("Windows SMB 连接仅支持默认端口 445".into());
+    }
+    match url.host() {
+        Some(url::Host::Domain(host)) if !host.contains(['\\', '/', ':']) => Ok(host),
+        Some(url::Host::Ipv4(_)) => url.host_str().ok_or_else(|| "缺少服务器地址".into()),
+        _ => Err("Windows SMB 暂不支持此服务器地址，请使用主机名或 IPv4 地址".into()),
+    }
+}
+
+#[cfg(windows)]
+fn windows_paths(url: &Url) -> Result<(String, std::path::PathBuf), String> {
+    let server = windows_server(url)?;
+    let mut parts = Vec::new();
+    for segment in url.path_segments().ok_or("缺少共享名称")? {
+        if segment.is_empty() {
+            continue;
+        }
+        let decoded = percent_encoding::percent_decode_str(segment)
+            .decode_utf8()
+            .map_err(|_| "路径编码无效")?;
+        if decoded == "."
+            || decoded == ".."
+            || decoded
+                .chars()
+                .any(|c| c.is_control() || "\\/:*?\"<>|".contains(c))
+        {
+            return Err("共享名称或路径无效".into());
+        }
+        parts.push(decoded.into_owned());
+    }
+    let share = parts.first().ok_or("请先选择共享文件夹")?;
+    let root = format!(r"\\{server}\{share}");
+    let mut path = std::path::PathBuf::from(&root);
+    for part in parts.iter().skip(1) {
+        path.push(part);
+    }
+    Ok((root, path))
+}
+
+#[cfg(windows)]
+fn windows_connect(url: &Url, username: &str, password: &str) -> Result<Vec<String>, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::{
+        Foundation::{ERROR_SESSION_CREDENTIAL_CONFLICT, NO_ERROR},
+        NetworkManagement::WNet::{WNetAddConnection2W, NETRESOURCEW, RESOURCETYPE_DISK},
+    };
+    let (root, path) = windows_paths(url)?;
+    if username.contains('\0') || password.contains('\0') {
+        return Err("用户名或密码包含无效字符".into());
+    }
+    let wide = |s: &str| {
+        std::ffi::OsStr::new(s)
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>()
+    };
+    let mut remote = wide(&root);
+    let user = wide(if is_guest(username, password) {
+        "Guest"
+    } else {
+        username
+    });
+    let pass = wide(password);
+    let resource = NETRESOURCEW {
+        dwType: RESOURCETYPE_DISK,
+        lpRemoteName: remote.as_mut_ptr(),
+        ..unsafe { std::mem::zeroed() }
+    };
+    // A deviceless, non-persistent connection does not allocate a drive letter or save credentials.
+    let status = unsafe { WNetAddConnection2W(&resource, pass.as_ptr(), user.as_ptr(), 0) };
+    if status != NO_ERROR {
+        return Err(if status == ERROR_SESSION_CREDENTIAL_CONFLICT {
+            "Windows 已使用其他凭据连接此服务器。请先断开已有连接，再重试；应用不会自动断开它们。"
+                .into()
+        } else {
+            format!(
+                "无法连接 SMB 共享：{}（错误码 {status}）",
+                std::io::Error::from_raw_os_error(status as i32)
+            )
+        });
+    }
+    let metadata =
+        std::fs::metadata(&path).map_err(|e| format!("共享已连接，但无法访问指定目录：{e}"))?;
+    if !metadata.is_dir() {
+        return Err("共享中的指定路径不是文件夹".into());
+    }
+    Ok(vec![path.to_string_lossy().into_owned()])
 }
 
 #[cfg(target_os = "linux")]
@@ -290,6 +388,27 @@ mod tests {
         assert!(!is_guest("alice", ""));
         assert!(!is_guest("", "password"));
         assert!(!is_guest("guest", "password"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn converts_smb_urls_to_safe_unc_paths() {
+        let url = validate_address("smb://server/%E5%85%B1%E4%BA%AB%20%E6%96%87%E4%BB%B6/Photos")
+            .unwrap();
+        let (root, path) = windows_paths(&url).unwrap();
+        assert_eq!(root, r"\\server\共享 文件");
+        assert_eq!(path.to_str().unwrap(), r"\\server\共享 文件\Photos");
+        for address in [
+            "smb://server:1445/share",
+            "smb://server/share/a%5Cb",
+            "smb://server/share/%00",
+            "smb://[::1]/share",
+        ] {
+            assert!(
+                windows_paths(&validate_address(address).unwrap()).is_err(),
+                "{address}"
+            );
+        }
     }
 
     #[cfg(target_os = "linux")]

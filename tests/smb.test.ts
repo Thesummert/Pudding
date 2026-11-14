@@ -3,9 +3,10 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import App from '../src/App.svelte';
 import { api } from '../src/lib/api';
 
+const platform = vi.hoisted(() => ({ value: 'macos' }));
 vi.mock('../src/lib/api', async (original) => {
   const module = await original<typeof import('../src/lib/api')>();
-  return { ...module, desktop: true, api: { ...module.api, info: async () => ({ ...await module.api.info(), platform: 'macos' }), connectSmb: vi.fn(), listSmbShares: vi.fn() } };
+  return { ...module, desktop: true, api: { ...module.api, info: async () => ({ ...await module.api.info(), platform: platform.value }), connectSmb: vi.fn(), listSmbShares: vi.fn() } };
 });
 
 let host: HTMLDivElement;
@@ -21,7 +22,16 @@ beforeEach(async () => {
   flushSync();
   await vi.waitFor(() => expect(host.querySelectorAll('.file-card')).toHaveLength(10));
 });
-afterEach(async () => { await unmount(app); host.remove(); });
+afterEach(async () => { await unmount(app); host.remove(); platform.value = 'macos'; });
+
+it('enables the SMB dialog on Windows', async () => {
+  await unmount(app);
+  platform.value = 'windows';
+  app = mount(App, { target: host });
+  await vi.waitFor(() => expect([...host.querySelectorAll('button')].find((button) => button.textContent?.includes('连接 SMB 共享'))?.disabled).toBe(false));
+  [...host.querySelectorAll('button')].find((button) => button.textContent?.includes('连接 SMB 共享'))!.click();
+  expect(host.querySelector<HTMLDialogElement>('.smb-modal')?.open).toBe(true);
+});
 
 it('saves successful connections without credentials and navigates to the share', async () => {
   const read = vi.spyOn(api, 'read');

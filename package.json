@@ -7,6 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "npm run check && vite build",
     "build:macos": "bash scripts/build-macos.sh",
+    "build:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
     "preview": "vite preview --host 127.0.0.1",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
