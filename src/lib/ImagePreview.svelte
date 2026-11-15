@@ -3,6 +3,7 @@
   import FileIcon from './FileIcon.svelte';
   import { api } from './api';
   import { queueThumbnail } from './thumbnail-queue';
+  import { loadImageThumbnail } from './image-thumbnail';
   import type { FileEntry } from './types';
 
   let { entry, actualSize = false, thumbnail = false, large = false, interactive = false }: { entry: FileEntry; actualSize?: boolean; thumbnail?: boolean; large?: boolean; interactive?: boolean } = $props();
@@ -88,7 +89,7 @@
     source = '';
     loaded = false;
     error = '';
-    const load = () => api.image(path, extension);
+    const load = () => thumbnail ? loadImageThumbnail(path, extension, modified, size, () => active) : api.image(path, extension);
     void (thumbnail ? queueThumbnail(load, () => active) : load()).then((result) => {
       if (!result) return;
       if (!active) { URL.revokeObjectURL(result); return; }
