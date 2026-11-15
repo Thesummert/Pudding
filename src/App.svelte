@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, FilePlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert, Eject, Settings, Network, Terminal } from '@lucide/svelte';
   import FileIcon from './lib/FileIcon.svelte';
+  import FolderPreview from './lib/FolderPreview.svelte';
   import FileThumbnail from './lib/FileThumbnail.svelte';
   import NameDialog from './lib/NameDialog.svelte';
   import ConflictDialog from './lib/ConflictDialog.svelte';
@@ -1087,7 +1088,7 @@
                   {@const index = windowed.start + localIndex}
                   <button class="file-card" draggable={!desktop && !busy} onpointerdown={(event) => beginDrag(event, entry)} ondragstart={(event) => demoDragStart(event, entry)} data-drop-path={entry.isDir ? entry.path : undefined} class:drop-target={dropRegion === 'browser' && dropTarget === entry.path} class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} title={`${entry.name}\n${entry.isDir ? '文件夹' : formatEntrySize(entry)}\n双击打开`} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
                     {#if selected.has(entry.path)}<span class="selected-check"><Check size={10} strokeWidth={3} /></span>{/if}
-                    <span class="file-visual">{#if !entry.metadataPending && (isImage(entry) || isVideo(entry))}<FileThumbnail {entry} large />{:else}<FileIcon {entry} large />{/if}</span>
+                    <span class="file-visual">{#if entry.isDir}<FolderPreview {entry} hidden={preferences.hidden} refreshToken={directory} />{:else if !entry.metadataPending && (isImage(entry) || isVideo(entry))}<FileThumbnail {entry} large />{:else}<FileIcon {entry} large />{/if}</span>
                     <span class="file-name">{entry.name}</span><span class="file-caption">{entry.isDir ? folderLabels[entry.name] ?? '文件夹' : formatEntrySize(entry)}</span>
                   </button>
                 {/each}

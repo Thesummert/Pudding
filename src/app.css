@@ -225,6 +225,10 @@ h1 { margin: 4px 0 3px; font-size: 22px; color: var(--heading); letter-spacing: 
 .file-thumbnail .thumbnail .file-icon.large { max-width: 100%; max-height: 100%; }
 .folder-shape { width: 100%; height: 100%; filter: drop-shadow(0 3px 2px #5795df0c); }
 .folder-symbol { position: absolute; left: 50%; top: 58%; transform: translate(-50%, -50%); color: #fff; opacity: .68; }
+.folder-preview { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+.folder-preview-items { position: absolute; left: 15%; right: 15%; top: 35%; bottom: 15%; display: grid; grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr); gap: 1px; padding: 2px; border-radius: 3px; background: color-mix(in srgb, var(--folder-front) 75%, white); overflow: hidden; }
+.folder-preview-item { display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0; overflow: hidden; }
+.folder-preview-item > .file-icon, .folder-preview-item > .file-thumbnail { transform: scale(.55); flex-shrink: 0; }
 .file-icon .document-shape { display: flex; align-items: center; justify-content: center; width: 21px; height: 25px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--secondary); border-radius: 3px; }
 .file-icon.large .document-shape { width: 45px; height: 54px; border-radius: 5px; box-shadow: 0 2px 5px #23385a05; }
 .file-icon[data-kind='PDF 文档'] .document-shape { color: #e27a78; background: #fdf7f7; border-color: #f1dedd; }

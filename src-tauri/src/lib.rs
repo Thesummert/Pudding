@@ -224,6 +224,11 @@ async fn read_directory(path: String) -> Result<filesystem::DirectoryListing, St
 }
 
 #[tauri::command]
+async fn folder_preview(path: String, hidden: bool) -> Result<Vec<filesystem::FileEntry>, String> {
+    blocking(move || filesystem::folder_preview(&path, hidden)).await
+}
+
+#[tauri::command]
 async fn read_entry_details(
     directory: String,
     names: Vec<String>,
@@ -465,6 +470,7 @@ pub fn run() {
             open_directory_window,
             search_files,
             read_directory,
+            folder_preview,
             read_entry_details,
             directory_size,
             read_image,

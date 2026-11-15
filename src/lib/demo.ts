@@ -110,6 +110,8 @@ export async function demoInvoke<T>(command: string, args: Record<string, unknow
   else if (command === 'read_directory') {
     const path = String(args.path).replace(/^~(?=\/|$)/, home).replace(/\/$/, '') || '/';
     result = { path, parent: path === '/' ? null : path.slice(0, path.lastIndexOf('/')) || '/', entries: structuredClone(getFolder(path)), skipped: 0 } satisfies DirectoryListing;
+  } else if (command === 'folder_preview') {
+    result = structuredClone(getFolder(String(args.path)).filter((item) => args.hidden || !item.hidden).slice(0, 4));
   } else if (command === 'create_folder' || command === 'create_file' || command === 'rename_entry') {
     const name = String(args.name);
     const invalid = validateName(name);

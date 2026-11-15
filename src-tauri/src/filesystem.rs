@@ -139,6 +139,43 @@ pub fn read_directory(path: &str) -> Result<DirectoryListing> {
     read_directory_impl(path, true)
 }
 
+pub fn folder_preview(path: &str, hidden: bool) -> Result<Vec<FileEntry>> {
+    let directory = resolve_directory(path)?;
+    let reader = fs::read_dir(&directory).map_err(|e| io_error("无法读取", &directory, e))?;
+    Ok(reader
+        .filter_map(|item| item.ok())
+        .filter_map(|item| directory_entry(&item))
+        .filter(|entry| hidden || !entry.hidden)
+        .take(4)
+        .collect())
+}
+
+#[cfg(test)]
+mod folder_preview_tests {
+    use super::*;
+
+    #[test]
+    fn limits_entries_and_respects_hidden_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".hidden"), "").unwrap();
+        for index in 0..6 {
+            fs::write(dir.path().join(format!("file{index}")), "").unwrap();
+        }
+        let path = display(dir.path());
+        let visible = folder_preview(&path, false).unwrap();
+        assert_eq!(visible.len(), 4);
+        assert!(visible.iter().all(|entry| !entry.hidden));
+        fs::remove_file(dir.path().join("file0")).unwrap();
+        fs::remove_file(dir.path().join("file1")).unwrap();
+        fs::remove_file(dir.path().join("file2")).unwrap();
+        fs::remove_file(dir.path().join("file3")).unwrap();
+        assert!(folder_preview(&path, true)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.hidden));
+    }
+}
+
 pub fn read_directory_full(path: &str) -> Result<DirectoryListing> {
     read_directory_impl(path, false)
 }

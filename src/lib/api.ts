@@ -50,6 +50,7 @@ export const api = {
   listenOpenDirectories: (handler: () => void) => desktop ? getCurrentWebview().listen('open-directories', handler) : Promise.resolve(() => {}),
   setWindowDirectory: (path: string) => desktop ? invoke<void>('set_window_directory', { path }) : Promise.resolve(),
   read: (path: string) => call<DirectoryListing>('read_directory', { path }),
+  folderPreview: (path: string, hidden: boolean) => call<FileEntry[]>('folder_preview', { path, hidden }),
   readEntryDetails: (directory: string, names: string[]) => call<FileEntry[]>('read_entry_details', { directory, names }),
   directorySize: async (path: string): Promise<number> => {
     if (desktop) return invoke<number>('directory_size', { path });
