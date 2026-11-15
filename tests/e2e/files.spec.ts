@@ -24,6 +24,26 @@ test('directory history, parent navigation and typed paths', async ({ page }) =>
   await expect(page.getByRole('heading', { name: '下载.' })).toBeVisible();
 });
 
+test('recent folders persist, reopen and can be removed', async ({ page }) => {
+  await page.getByRole('button', { name: 'Documents', exact: true }).dblclick();
+  await expect(page.getByRole('heading', { name: '文档.' })).toBeVisible();
+  await page.getByRole('navigation', { name: '常用位置' }).getByRole('button', { name: '下载', exact: true }).click();
+  await page.getByRole('button', { name: '近期访问', exact: true }).click();
+  const recent = page.getByRole('region', { name: '近期访问记录' });
+  await expect(recent.getByRole('button', { name: '打开近期访问的文件夹 Downloads' })).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: '近期访问', exact: true }).click();
+  await expect(recent.getByRole('button', { name: '打开近期访问的文件夹 Documents' })).toBeVisible();
+  await recent.getByRole('button', { name: '打开近期访问的文件夹 Documents' }).click();
+  await expect(page.getByRole('heading', { name: '文档.' })).toBeVisible();
+  await page.getByRole('button', { name: '近期访问', exact: true }).click();
+  await expect(recent.locator('.recent-open').first()).toHaveAttribute('title', /Documents$/);
+  await recent.getByRole('button', { name: '从近期访问中移除 Documents' }).click();
+  await expect(recent.getByRole('button', { name: '打开近期访问的文件夹 Documents' })).toHaveCount(0);
+  await page.getByRole('button', { name: '清空记录' }).click();
+  await expect(recent.getByText('暂无访问记录')).toBeVisible();
+});
+
 test('filtering, hidden files, view preferences and theme', async ({ page }) => {
   await expect(page.getByRole('button', { name: '.config', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '更多显示选项', exact: true }).click();

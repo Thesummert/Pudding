@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, FilePlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert, Eject, Settings, Network, Terminal } from '@lucide/svelte';
+  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, FilePlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert, Eject, Settings, Network, Terminal, Clock } from '@lucide/svelte';
   import FileIcon from './lib/FileIcon.svelte';
   import FolderPreview from './lib/FolderPreview.svelte';
   import FileThumbnail from './lib/FileThumbnail.svelte';
@@ -80,6 +80,14 @@
     } catch { return []; }
   }
   let pinnedFolders = $state<string[]>(loadPinnedFolders());
+  function loadRecentFolders(): string[] {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem('pudding.recentFolders') || '[]');
+      return Array.isArray(saved) ? [...new Set(saved.filter((path): path is string => typeof path === 'string' && path.length > 0))].slice(0, 50) : [];
+    } catch { return []; }
+  }
+  let recentFolders = $state<string[]>(loadRecentFolders());
+  let showingRecent = $state(false);
   type FolderDisplay = { view: ViewMode; sort: SortKey; descending: boolean };
   function loadFolderDisplays(): Record<string, FolderDisplay> {
     try {
@@ -134,8 +142,8 @@
   let editingAddress = $state(false);
   let address = $state('');
   let addressInput = $state<HTMLInputElement>();
-  let searchInput: HTMLInputElement;
-  let fileArea: HTMLDivElement;
+  let searchInput = $state<HTMLInputElement>(undefined!);
+  let fileArea = $state<HTMLDivElement>(undefined!);
   let viewport = $state({ width: 0, height: 0, scrollTop: 0, topPadding: 0 });
   function trackFileArea(node: HTMLDivElement) {
     const measure = () => {
@@ -266,6 +274,9 @@
   $effect(() => {
     try { localStorage.setItem('pudding.pinnedFolders', JSON.stringify(pinnedFolders)); } catch { /* Optional persistence. */ }
   });
+  $effect(() => {
+    try { localStorage.setItem('pudding.recentFolders', JSON.stringify(recentFolders)); } catch { /* Optional persistence. */ }
+  });
 
   // Filtering must also update selection, so hidden files cannot be operated on accidentally.
   $effect(() => {
@@ -382,6 +393,7 @@
         descending = saved?.descending ?? false;
       }
       directory = result;
+      if (!refresh) { recentFolders = [result.path, ...recentFolders.filter((item) => item !== result.path)].slice(0, 50); showingRecent = false; }
       void api.setWindowDirectory(result.path).catch(() => {});
       if (!refresh) void api.watch(result.path).catch((error) => notify(errorMessage(error), true));
       editingAddress = false;
@@ -409,6 +421,7 @@
     if (busy || id === activeTab) return;
     const tab = tabs.find((item) => item.id === id);
     if (!tab?.path) return;
+    showingRecent = false;
     activeTab = id;
     history = [...tab.history];
     historyIndex = tab.historyIndex;
@@ -509,7 +522,7 @@
   }
 
   function refresh() { if (directory && !busy) { void refreshVolumes(); void navigate(directory.path, undefined, true); } }
-  function back() { if (!busy && historyIndex > 0) void navigate(history[historyIndex - 1], historyIndex - 1); }
+  function back() { if (showingRecent) showingRecent = false; else if (!busy && historyIndex > 0) void navigate(history[historyIndex - 1], historyIndex - 1); }
   function forward() { if (!busy && historyIndex < history.length - 1) void navigate(history[historyIndex + 1], historyIndex + 1); }
   function up() { if (!busy && directory?.parent) void navigate(directory.parent); }
 
@@ -926,6 +939,10 @@
       return;
     }
     if (document.querySelector('dialog[open]')) return;
+    if (showingRecent) {
+      if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); showingRecent = false; }
+      return;
+    }
     const target = event.target as HTMLElement;
     const modifier = event.ctrlKey || event.metaKey;
     if (modifier && event.key.toLowerCase() === 't') { event.preventDefault(); newTab(); return; }
@@ -1005,11 +1022,12 @@
         <nav class="places" aria-label="常用位置">
           {#each info?.places ?? [] as place}
             {@const PlaceIcon = placeIcons[place.id] ?? Folder}
-            <button data-drop-path={place.path} class:drop-target={dropRegion === 'sidebar' && dropTarget === place.path} class:active={directory?.path === place.path} onclick={() => navigate(place.path)} disabled={operating} aria-current={directory?.path === place.path ? 'page' : undefined} title={place.path}><PlaceIcon size={18} strokeWidth={1.8} /><span>{place.name}</span>{#if place.id === 'home'}<span class="home-key">⌂</span>{/if}</button>
+            <button data-drop-path={place.path} class:drop-target={dropRegion === 'sidebar' && dropTarget === place.path} class:active={!showingRecent && directory?.path === place.path} onclick={() => navigate(place.path)} disabled={operating} aria-current={!showingRecent && directory?.path === place.path ? 'page' : undefined} title={place.path}><PlaceIcon size={18} strokeWidth={1.8} /><span>{place.name}</span>{#if place.id === 'home'}<span class="home-key">⌂</span>{/if}</button>
           {/each}
           {#each pinnedFolders as path (path)}
             <div class="device-row"><button class="device-open" data-drop-path={path} class:drop-target={dropRegion === 'sidebar' && dropTarget === path} class:active={directory?.path === path} title={path} aria-label={`打开固定文件夹 ${basename(path) || path}`} aria-current={directory?.path === path ? 'page' : undefined} onclick={() => navigate(path)} disabled={busy}><Folder size={18} strokeWidth={1.8} /><span>{info?.places.find((place) => place.path === path)?.name ?? (basename(path) || path)}</span></button><button class="device-eject" title="取消固定" aria-label={`取消固定 ${basename(path) || path}`} onclick={() => pinnedFolders = pinnedFolders.filter((item) => item !== path)}><X size={15} /></button></div>
           {/each}
+          <button class:active={showingRecent} aria-current={showingRecent ? 'page' : undefined} onclick={() => { showingRecent = true; context = null; selected = new Set(); }}><Clock size={18} strokeWidth={1.8} /><span>近期访问</span></button>
           {#if !info}{#each Array(7) as _}<div class="sidebar-skeleton"></div>{/each}{/if}
         </nav>
         <div class="sidebar-divider"></div>
@@ -1026,6 +1044,15 @@
     </aside>
 
     <main class="main-shell">
+      {#if showingRecent}
+        <div class="navigation-bar"><button class="icon-button" title="返回文件夹" aria-label="返回文件夹" onclick={() => showingRecent = false}><ArrowLeft size={19} /></button><span>近期访问</span></div>
+        <section class="recent-page" aria-label="近期访问记录">
+          <div class="folder-heading"><div class="folder-title"><span class="eyebrow">我的空间 <span>/</span> RECENT</span><h1>近期访问<span class="heading-dot">.</span></h1><p>最近打开的文件夹</p></div><button class="button" disabled={!recentFolders.length} onclick={() => recentFolders = []}><Trash2 size={16} />清空记录</button></div>
+          {#if recentFolders.length}
+            <div class="recent-list">{#each recentFolders as path (path)}<div class="recent-row"><button class="recent-open" title={path} aria-label={`打开近期访问的文件夹 ${basename(path) || path}`} onclick={() => navigate(path)} disabled={busy}><Folder size={20} /><span><strong>{info?.places.find((place) => place.path === path)?.name ?? (basename(path) || path)}</strong><small>{path}</small></span></button><button class="icon-button" title="从近期访问中移除" aria-label={`从近期访问中移除 ${basename(path) || path}`} onclick={() => recentFolders = recentFolders.filter((item) => item !== path)}><X size={16} /></button></div>{/each}</div>
+          {:else}<div class="empty-state"><span class="empty-icon"><Clock size={34} strokeWidth={1.3} /></span><h2>暂无访问记录</h2><p>打开过的文件夹会显示在这里。</p></div>{/if}
+        </section>
+      {:else}
       <div class="navigation-bar">
         <div class="navigation-controls">
           <button class="icon-button" title="后退 (Alt+←)" aria-label="后退" disabled={busy || historyIndex <= 0} onclick={back}><ArrowLeft size={19} /></button>
@@ -1130,6 +1157,7 @@
         {/if}
       </div>
 
+      {/if}
       {#if transferTasks.length}
         <section class="transfer-tasks" aria-label="后台任务">
           {#each transferTasks as task (task.id)}
