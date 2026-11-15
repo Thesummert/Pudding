@@ -21,23 +21,29 @@
   import { backgrounds, type BackgroundImage } from './lib/backgrounds';
   import { openSelectedFiles } from './lib/open-selected';
 
-  type Preferences = { view: ViewMode; hidden: boolean; inspector: boolean; size: number; dark: boolean; terminal: string; customTerminal: string; backgroundId: string; backgroundBlur: number; backgroundOpacity: number; backgroundRandomChance: number };
+  type ThemeMode = 'system' | 'light' | 'dark';
+  type Preferences = { view: ViewMode; hidden: boolean; inspector: boolean; size: number; theme: ThemeMode; terminal: string; customTerminal: string; backgroundId: string; backgroundBlur: number; backgroundOpacity: number; backgroundRandomChance: number };
   function loadPreferences(): Preferences {
-    const defaults: Preferences = { view: 'grid', hidden: false, inspector: true, size: 120, dark: false, terminal: 'system', customTerminal: '', backgroundId: '', backgroundBlur: 0, backgroundOpacity: 25, backgroundRandomChance: 50 };
+    const defaults: Preferences = { view: 'grid', hidden: false, inspector: true, size: 120, theme: 'system', terminal: 'system', customTerminal: '', backgroundId: '', backgroundBlur: 0, backgroundOpacity: 25, backgroundRandomChance: 50 };
     try {
       const saved = JSON.parse(localStorage.getItem('pudding.preferences') || '{}');
-      return { view: saved.view === 'list' ? 'list' : 'grid', hidden: saved.hidden === true, inspector: saved.inspector !== false, size: Number.isFinite(saved.size) && saved.size >= 104 && saved.size <= 168 ? saved.size : 120, dark: saved.dark === true, terminal: typeof saved.terminal === 'string' ? saved.terminal : 'system', customTerminal: typeof saved.customTerminal === 'string' ? saved.customTerminal : '', backgroundId: typeof saved.backgroundId === 'string' ? saved.backgroundId : '', backgroundBlur: Number.isFinite(saved.backgroundBlur) ? Math.max(0, Math.min(30, saved.backgroundBlur)) : 0, backgroundOpacity: Number.isFinite(saved.backgroundOpacity) ? Math.max(0, Math.min(100, saved.backgroundOpacity)) : 25, backgroundRandomChance: Number.isFinite(saved.backgroundRandomChance) ? Math.max(0, Math.min(100, saved.backgroundRandomChance)) : 50 };
+      return { view: saved.view === 'list' ? 'list' : 'grid', hidden: saved.hidden === true, inspector: saved.inspector !== false, size: Number.isFinite(saved.size) && saved.size >= 104 && saved.size <= 168 ? saved.size : 120, theme: saved.theme === 'system' || saved.theme === 'light' || saved.theme === 'dark' ? saved.theme : typeof saved.dark === 'boolean' ? (saved.dark ? 'dark' : 'light') : 'system', terminal: typeof saved.terminal === 'string' ? saved.terminal : 'system', customTerminal: typeof saved.customTerminal === 'string' ? saved.customTerminal : '', backgroundId: typeof saved.backgroundId === 'string' ? saved.backgroundId : '', backgroundBlur: Number.isFinite(saved.backgroundBlur) ? Math.max(0, Math.min(30, saved.backgroundBlur)) : 0, backgroundOpacity: Number.isFinite(saved.backgroundOpacity) ? Math.max(0, Math.min(100, saved.backgroundOpacity)) : 25, backgroundRandomChance: Number.isFinite(saved.backgroundRandomChance) ? Math.max(0, Math.min(100, saved.backgroundRandomChance)) : 50 };
     } catch { return defaults; }
   }
 
   let preferences = $state(loadPreferences());
   let savedPreferences = { ...preferences };
+  let systemDark = $state(typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  let dark = $derived(preferences.theme === 'system' ? systemDark : preferences.theme === 'dark');
   let backgroundImages = $state<Array<BackgroundImage & { url: string }>>([]);
   let backgroundError = $state('');
   let backgroundRevision = 0;
   let backgroundUrl = $derived(backgroundImages.find((image) => image.id === preferences.backgroundId)?.url ?? '');
   onMount(() => {
     let alive = true;
+    const colorScheme = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+    const updateColorScheme = (event: MediaQueryListEvent) => { systemDark = event.matches; };
+    colorScheme?.addEventListener('change', updateColorScheme);
     async function refreshBackgrounds() {
       const current = ++backgroundRevision;
       try {
@@ -52,7 +58,7 @@
     function syncBackgrounds(event: StorageEvent) {
       if (event.key === 'pudding.preferences') {
         const latest = loadPreferences();
-        for (const key of ['backgroundId', 'backgroundBlur', 'backgroundOpacity', 'backgroundRandomChance'] as const) {
+        for (const key of ['theme', 'backgroundId', 'backgroundBlur', 'backgroundOpacity', 'backgroundRandomChance'] as const) {
           if (preferences[key] === savedPreferences[key]) {
             // Assign separately to preserve the types of the preference fields.
             Object.assign(preferences, { [key]: latest[key] });
@@ -67,7 +73,7 @@
       const [allowRandom] = await Promise.all([api.takeBackgroundStartup().catch(() => false), refreshBackgrounds()]);
       if (alive && allowRandom && preferences.backgroundId && Math.random() * 100 < preferences.backgroundRandomChance) chooseRandomBackground();
     })();
-    return () => { alive = false; backgroundRevision++; window.removeEventListener('storage', syncBackgrounds); for (const image of backgroundImages) URL.revokeObjectURL(image.url); };
+    return () => { alive = false; colorScheme?.removeEventListener('change', updateColorScheme); backgroundRevision++; window.removeEventListener('storage', syncBackgrounds); for (const image of backgroundImages) URL.revokeObjectURL(image.url); };
   });
   function signalBackgroundChange() {
     try { localStorage.setItem('pudding.backgrounds', crypto.randomUUID()); } catch { /* Optional cross-window sync. */ }
@@ -1065,7 +1071,7 @@
 
 <svelte:window onmousedown={mouseNavigation} onauxclick={(event) => { if (event.button === 3 || event.button === 4) event.preventDefault(); }} onfocus={() => { void syncClipboard(); void refreshVolumes(); }} onpointermove={pointerMove} onpointerup={(event) => { dragGesture = null; endMarquee(event); }} onpointercancel={(event) => { dragGesture = null; endMarquee(event, true); }} ondragover={demoDragOver} ondrop={demoDrop} ondragend={() => { demoDrag = null; dropTarget = null; }} ondragleave={(event) => { if (!event.relatedTarget) dropTarget = null; }} onkeydown={keydown} onkeyup={(event) => { dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey }; shiftHeld = event.shiftKey; }} onclick={() => { context = null; optionsOpen = false; dropMenu = null; }} onblur={() => { context = null; optionsOpen = false; dragGesture = null; dropTarget = null; shiftHeld = false; if (marquee) selected = new Set(marquee.initial); marquee = null; }} onresize={() => context = null} />
 
-<div class="app-shell" class:has-background={!!backgroundUrl} data-theme={preferences.dark ? 'dark' : 'light'}>
+<div class="app-shell" class:has-background={!!backgroundUrl} data-theme={dark ? 'dark' : 'light'}>
   {#if backgroundUrl}<div class="window-background" aria-hidden="true"><img src={backgroundUrl} alt="" style={`filter: blur(${preferences.backgroundBlur}px); opacity: ${preferences.backgroundOpacity / 100}`} /></div>{/if}
   <header class="app-header">
     <a class="brand" href="#home" onclick={(event) => { event.preventDefault(); if (info && !busy) void navigate(info.home); }} aria-label="Pudding 主文件夹">
@@ -1087,7 +1093,7 @@
       {#if !desktop}<span class="demo-badge" title="浏览器中使用示例数据；桌面版连接真实文件系统">演示模式</span>{:else}<span class="desktop-badge"><span class="status-dot"></span>本地工作空间</span>{/if}
       <button class="icon-button" title="设置" aria-label="设置" onclick={() => { settingsOpen = true; settingsDialog.showModal(); }}><Settings size={18} /></button>
       <button class="icon-button" title="快捷键与帮助" aria-label="快捷键与帮助" onclick={() => helpDialog.showModal()}><Keyboard size={18} /></button>
-      <button class="icon-button" title={preferences.dark ? '切换浅色外观' : '切换深色外观'} aria-label={preferences.dark ? '切换浅色外观' : '切换深色外观'} onclick={() => preferences.dark = !preferences.dark}>{#if preferences.dark}<Sun size={18} />{:else}<Moon size={18} />{/if}</button>
+      <button class="icon-button" title={dark ? '切换浅色外观' : '切换深色外观'} aria-label={dark ? '切换浅色外观' : '切换深色外观'} onclick={() => preferences.theme = dark ? 'light' : 'dark'}>{#if dark}<Sun size={18} />{:else}<Moon size={18} />{/if}</button>
     </div>
   </header>
 
@@ -1333,7 +1339,7 @@
     <div class="settings-list">
       <section hidden={settingsCategory !== 'appearance'} aria-labelledby="settings-appearance">
       <h3 class="settings-section" id="settings-appearance">外观与背景</h3>
-      <label class="settings-row"><span><strong>外观</strong><small>选择浅色或深色界面</small></span><select aria-label="外观" value={preferences.dark ? 'dark' : 'light'} onchange={(event) => preferences.dark = event.currentTarget.value === 'dark'}><option value="light">浅色</option><option value="dark">深色</option></select></label>
+      <label class="settings-row"><span><strong>外观</strong><small>选择跟随系统、浅色或深色界面</small></span><select aria-label="外观" value={preferences.theme} onchange={(event) => preferences.theme = event.currentTarget.value as ThemeMode}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
       <div class="settings-row"><span><strong>背景图片</strong><small>图片保存在本机，可添加多张并选择一张使用</small></span><label class="button background-add">添加图片…<input type="file" accept="image/*" multiple onchange={addBackgrounds} /></label></div>
       {#if backgroundImages.length}
         <div class="background-list" aria-label="背景图片列表">

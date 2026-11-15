@@ -732,6 +732,46 @@ describe('file manager interactions', () => {
     expect(button('设计素材.zip')).toBeTruthy();
   });
 
+  it('follows system appearance changes and preserves manual choices', async () => {
+    const scheme = new EventTarget() as MediaQueryList;
+    Object.defineProperty(scheme, 'matches', { value: true, configurable: true });
+    vi.spyOn(window, 'matchMedia').mockReturnValue(scheme);
+    await unmount(app);
+    app = mount(App, { target: host });
+    await tick();
+    expect(host.querySelector('.app-shell')?.getAttribute('data-theme')).toBe('dark');
+
+    const change = (matches: boolean) => {
+      const event = new Event('change');
+      Object.defineProperty(event, 'matches', { value: matches });
+      scheme.dispatchEvent(event);
+    };
+    change(false);
+    await tick();
+    expect(host.querySelector('.app-shell')?.getAttribute('data-theme')).toBe('light');
+    await click(button('切换深色外观'));
+    change(false);
+    await tick();
+    expect(host.querySelector('.app-shell')?.getAttribute('data-theme')).toBe('dark');
+    await click(button('设置'));
+    const appearance = host.querySelector<HTMLSelectElement>('[aria-label="外观"]')!;
+    appearance.value = 'system';
+    appearance.dispatchEvent(new Event('change', { bubbles: true }));
+    await tick();
+    expect(host.querySelector('.app-shell')?.getAttribute('data-theme')).toBe('light');
+    expect(JSON.parse(localStorage.getItem('pudding.preferences')!)).toMatchObject({ theme: 'system' });
+  });
+
+  it('retains the appearance from older saved preferences', async () => {
+    localStorage.setItem('pudding.preferences', JSON.stringify({ dark: true }));
+    await unmount(app);
+    app = mount(App, { target: host });
+    await tick();
+    expect(host.querySelector('.app-shell')?.getAttribute('data-theme')).toBe('dark');
+    await click(button('设置'));
+    expect(host.querySelector<HTMLSelectElement>('[aria-label="外观"]')!.value).toBe('dark');
+  });
+
   it('applies and saves settings from the settings dialog', async () => {
     await click(button('设置'));
     const settings = host.querySelector<HTMLDialogElement>('.settings-modal')!;
@@ -739,6 +779,7 @@ describe('file manager interactions', () => {
     const appearance = settings.querySelector<HTMLSelectElement>('[aria-label="外观"]')!;
     appearance.value = 'dark';
     appearance.dispatchEvent(new Event('change', { bubbles: true }));
+    await tick();
     expect(button('外观与背景').getAttribute('aria-pressed')).toBe('true');
     await click(button('文件显示'));
     expect(button('文件显示').getAttribute('aria-pressed')).toBe('true');
@@ -748,7 +789,7 @@ describe('file manager interactions', () => {
     hidden.click();
     await tick();
     expect(host.querySelector('.app-shell')?.getAttribute('data-theme')).toBe('dark');
-    expect(JSON.parse(localStorage.getItem('pudding.preferences')!)).toMatchObject({ dark: true, hidden: true });
+    expect(JSON.parse(localStorage.getItem('pudding.preferences')!)).toMatchObject({ theme: 'dark', hidden: true });
     await click(button('完成'));
     expect(settings.open).toBe(false);
   });
@@ -797,7 +838,7 @@ describe('file manager interactions', () => {
     expect(host.querySelectorAll('.file-row')).toHaveLength(11);
     await click(button('切换深色外观'));
     expect(host.querySelector('.app-shell')?.getAttribute('data-theme')).toBe('dark');
-    expect(JSON.parse(localStorage.getItem('pudding.preferences')!)).toMatchObject({ hidden: true, view: 'grid', dark: true });
+    expect(JSON.parse(localStorage.getItem('pudding.preferences')!)).toMatchObject({ hidden: true, view: 'grid', theme: 'dark' });
     expect(JSON.parse(localStorage.getItem('pudding.folderDisplays')!)['/home/pudding'].view).toBe('list');
   });
 
