@@ -1,10 +1,25 @@
 use std::{path::PathBuf, process::Command};
 
 fn supports_protocol(path: &std::path::Path) -> bool {
-    Command::new(path)
+    helper_command(path)
         .arg("--protocol-version")
         .output()
-        .is_ok_and(|result| result.status.success() && result.stdout == b"sugar-pudding-2\n")
+        .is_ok_and(|result| result.status.success() && protocol_matches(&result.stdout))
+}
+
+fn helper_command(path: &std::path::Path) -> Command {
+    #[allow(unused_mut)]
+    let mut command = Command::new(path);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    command
+}
+
+fn protocol_matches(output: &[u8]) -> bool {
+    output == b"sugar-pudding-2\n" || output == b"sugar-pudding-2\r\n"
 }
 
 fn helper() -> Option<PathBuf> {
@@ -18,6 +33,8 @@ fn helper() -> Option<PathBuf> {
             }));
         }
     }
+    #[cfg(windows)]
+    candidates.extend(windows_install_candidates());
     #[cfg(target_os = "macos")]
     {
         if let Some(path) = objc2::rc::autoreleasepool(|_| {
@@ -40,6 +57,63 @@ fn helper() -> Option<PathBuf> {
         }
     }
     find_helper(candidates)
+}
+
+#[cfg(windows)]
+fn windows_install_candidates() -> Vec<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Registry::{
+        RegGetValueW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6432KEY,
+        RRF_SUBKEY_WOW6464KEY,
+    };
+    let key: Vec<u16> = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{4EAB2D7E9-9EE9-4B45-A5CD-2583C95D5F7A}_is1".encode_utf16().chain(Some(0)).collect();
+    let value: Vec<u16> = "InstallLocation".encode_utf16().chain(Some(0)).collect();
+    let mut candidates = Vec::new();
+    for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+        for view in [RRF_SUBKEY_WOW6464KEY, RRF_SUBKEY_WOW6432KEY] {
+            let mut size = 0u32;
+            let flags = RRF_RT_REG_SZ | view;
+            let status = unsafe {
+                RegGetValueW(
+                    root,
+                    key.as_ptr(),
+                    value.as_ptr(),
+                    flags,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &mut size,
+                )
+            };
+            if status != 0 || size < 2 || size % 2 != 0 {
+                continue;
+            }
+            let mut data = vec![0u16; (size / 2) as usize];
+            let status = unsafe {
+                RegGetValueW(
+                    root,
+                    key.as_ptr(),
+                    value.as_ptr(),
+                    flags,
+                    std::ptr::null_mut(),
+                    data.as_mut_ptr().cast(),
+                    &mut size,
+                )
+            };
+            if status == 0 {
+                data.truncate((size as usize / 2).min(data.len()));
+                if data.last() == Some(&0) {
+                    data.pop();
+                }
+                if !data.is_empty() {
+                    candidates.push(
+                        PathBuf::from(std::ffi::OsString::from_wide(&data))
+                            .join("sugar-archive-pudding.exe"),
+                    );
+                }
+            }
+        }
+    }
+    candidates
 }
 
 fn find_helper(candidates: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
@@ -100,7 +174,19 @@ pub fn run(action: &str, paths: Vec<String>) -> Result<(), String> {
                 .map_err(|error| format!("无法启动 Sugar：{error}"));
         }
     }
-    let mut command = Command::new(helper);
+    #[cfg(windows)]
+    if action == "custom" {
+        let executable = helper.with_file_name("sugar-archive.exe");
+        if executable.is_file() {
+            return Command::new(executable)
+                .arg("--pudding-stage")
+                .args(&paths)
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| format!("无法启动 Sugar：{error}"));
+        }
+    }
+    let mut command = helper_command(&helper);
     let mut created_dir = None;
     match action {
         "extract" | "extract-folder" => {
@@ -208,5 +294,12 @@ mod tests {
         assert_eq!(archive_name("file.zip"), Some("file"));
         assert_eq!(archive_name("file.gz"), None);
         assert_eq!(archive_name(".zip"), None);
+    }
+
+    #[test]
+    fn protocol_accepts_windows_and_unix_line_endings_only() {
+        assert!(protocol_matches(b"sugar-pudding-2\n"));
+        assert!(protocol_matches(b"sugar-pudding-2\r\n"));
+        assert!(!protocol_matches(b"sugar-pudding-2\nextra"));
     }
 }
