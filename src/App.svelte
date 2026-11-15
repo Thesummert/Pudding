@@ -13,7 +13,7 @@
   import FileInfoDialog from './lib/FileInfoDialog.svelte';
   import { api, desktop } from './lib/api';
   import { basename, breadcrumbs, fileKind, formatDate, formatSize, formatEntrySize, isImage, isVideo, canPreview, visibleEntries } from './lib/files';
-  import type { AppInfo, Clipboard, DirectoryListing, FileEntry, SortKey, ViewMode } from './lib/types';
+  import type { AppInfo, Clipboard, DirectoryListing, FileEntry, MountableVolume, SortKey, ViewMode } from './lib/types';
   import type { DragDropEvent } from '@tauri-apps/api/webview';
   import { dragClientPosition } from './lib/drag';
   import { virtualWindow } from './lib/virtual-list';
@@ -134,6 +134,8 @@
   let shiftHeld = $state(false);
   let clipboardRequest = 0;
   let volumeRequest = 0;
+  let mountableVolumes = $state<MountableVolume[]>([]);
+  let mountableError = $state('');
   let dragGesture: { x: number; y: number; entry: FileEntry; pointerId: number } | null = null;
   let demoDrag: string[] | null = null;
   let pendingOpenDirectories = $state<string[]>([]);
@@ -456,10 +458,26 @@
 
   async function refreshVolumes() {
     const id = ++volumeRequest;
+    if (info?.platform === 'linux' && desktop) {
+      void api.mountableVolumes().then((volumes) => { if (id === volumeRequest) { mountableVolumes = volumes; mountableError = ''; } }).catch((error) => { if (id === volumeRequest) mountableError = errorMessage(error); });
+    }
     try {
       const roots = await api.volumes();
       if (id === volumeRequest && info) info = { ...info, roots };
     } catch { /* Keep the last known devices if the system is temporarily unavailable. */ }
+  }
+
+  async function mountVolume(volume: MountableVolume) {
+    if (busy) return;
+    operating = true;
+    try {
+      const path = await api.mountVolume(volume.device);
+      operating = false;
+      await refreshVolumes();
+      await navigate(path);
+      notify(`已挂载「${volume.name}」`);
+    } catch (error) { notify(errorMessage(error), true); await refreshVolumes(); }
+    finally { operating = false; }
   }
 
   function insideVolume(path: string, root: string): boolean {
@@ -1036,6 +1054,10 @@
           {#each info?.roots ?? [] as root}
             <div class="device-row"><button class="device-open" data-drop-path={root.path} class:drop-target={dropRegion === 'sidebar' && dropTarget === root.path} class:active={directory?.path === root.path} onclick={() => navigate(root.path)} disabled={operating} title={root.path}><HardDrive size={18} strokeWidth={1.8} /><span>{root.name}</span></button>{#if root.ejectable}<button class="device-eject" title={`推出 ${root.name}`} aria-label={`推出 ${root.name}`} onclick={() => ejectVolume(root)} disabled={busy}><Eject size={15} /></button>{/if}</div>
           {/each}
+          {#each mountableVolumes as volume (volume.device)}
+            <button title={`${volume.device} · ${volume.filesystem} · 点击挂载`} aria-label={`挂载 ${volume.name}`} onclick={() => mountVolume(volume)} disabled={busy}><HardDrive size={18} strokeWidth={1.8} /><span>{volume.name}</span><span class="mount-label">挂载</span></button>
+          {/each}
+          {#if mountableError}<div class="mount-error" role="status" title={mountableError}>无法读取未挂载磁盘</div>{/if}
           <button onclick={() => { smbError = ''; smbShares = null; smbDialog.showModal(); }} disabled={!desktop || !['macos', 'linux', 'windows'].includes(info?.platform ?? '')} title={!desktop ? '请在桌面版中连接 SMB' : !['macos', 'linux', 'windows'].includes(info?.platform ?? '') ? '当前系统不支持 SMB 连接' : '连接 SMB 共享'}><Network size={18} strokeWidth={1.8} /><span>连接 SMB 共享</span></button>
         </nav>
         <div class="sidebar-note"><span class="note-icon"><Folder size={19} strokeWidth={1.5} /></span><p>给每一份灵感<br />一个妥帖的位置。</p><span class="note-line"></span></div>

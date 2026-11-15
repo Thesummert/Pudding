@@ -28,6 +28,8 @@ export interface Volume extends Place {
   ejectable: boolean;
 }
 
+export interface MountableVolume { device: string; name: string; filesystem: string }
+
 export interface AppInfo {
   home: string;
   platform: string;

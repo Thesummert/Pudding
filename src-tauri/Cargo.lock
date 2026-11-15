@@ -3168,6 +3168,7 @@ dependencies = [
  "plist",
  "rfd",
  "serde",
+ "serde_json",
  "smb2",
  "tauri",
  "tauri-build",

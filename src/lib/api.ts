@@ -1,6 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
 import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core';
-import type { AppInfo, Clipboard, DirectoryListing, FileEntry, Volume } from './types';
+import type { AppInfo, Clipboard, DirectoryListing, FileEntry, Volume, MountableVolume } from './types';
 import { getCurrentWebview, type DragDropEvent } from '@tauri-apps/api/webview';
 import { imageMimeType } from './files';
 
@@ -42,6 +42,8 @@ export const api = {
   search: (path: string, query: string, hidden: boolean, searchContent: boolean, requestId: number) => desktop ? invoke<FileEntry[]>('search_files', { path, query, hidden, searchContent, requestId }) : Promise.resolve<FileEntry[] | null>(null),
   info: () => call<AppInfo>('get_app_info'),
   volumes: () => call<Volume[]>('list_volumes'),
+  mountableVolumes: () => desktop ? invoke<MountableVolume[]>('list_mountable_volumes') : Promise.resolve([]),
+  mountVolume: (device: string) => invoke<string>('mount_volume', { device }),
   ejectVolume: (path: string) => call<void>('eject_volume', { path }),
   connectSmb: (address: string, username: string, password: string) => desktop ? invoke<string[]>('connect_smb', { address, username, password }) : Promise.reject(new Error('浏览器演示无法连接 SMB 共享。')),
   listSmbShares: (address: string, username: string, password: string) => desktop ? invoke<string[]>('list_smb_shares', { address, username, password }) : Promise.reject(new Error('浏览器演示无法连接 SMB 共享。')),

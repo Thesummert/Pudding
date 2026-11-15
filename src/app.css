@@ -104,6 +104,8 @@ kbd { font-family: inherit; font-size: 10px; font-weight: 450; white-space: nowr
 .places button { display: flex; width: 100%; height: 39px; align-items: center; gap: 12px; padding: 0 13px; border-radius: 7px; color: var(--secondary); text-align: left; position: relative; font-size: 12px; transition: background .16s, color .16s; }
 .places button > span:not(.home-key) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .places button:hover { background: var(--surface-hover); color: var(--heading); }
+.places .mount-label { margin-left: auto; color: var(--accent); font-size: 11px; }
+.mount-error { padding: 5px 13px; color: var(--secondary); font-size: 11px; }
 .places button.active { background: var(--accent-soft); color: var(--accent); font-weight: 550; }
 .places button.active::before { content: ''; position: absolute; left: -15px; top: 11px; width: 3px; height: 17px; border-radius: 0 3px 3px 0; background: var(--accent); }
 .home-key { margin-left: auto; font-size: 17px; color: var(--accent); opacity: .6; }

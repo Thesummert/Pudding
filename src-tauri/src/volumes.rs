@@ -192,9 +192,149 @@ pub fn eject(path: &str) -> Result<(), String> {
     eject_checked(path)
 }
 
+#[derive(Clone, Serialize)]
+pub struct MountableVolume {
+    pub device: String,
+    pub name: String,
+    pub filesystem: String,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(serde::Deserialize)]
+struct BlockDeviceList {
+    blockdevices: Vec<BlockDevice>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(serde::Deserialize)]
+struct BlockDevice {
+    path: String,
+    label: Option<String>,
+    fstype: Option<String>,
+    #[serde(rename = "type")]
+    kind: String,
+    mountpoints: Vec<Option<String>>,
+}
+
+#[cfg(target_os = "linux")]
+fn block_devices() -> Result<Vec<BlockDevice>, String> {
+    let output = std::process::Command::new("lsblk")
+        .args([
+            "--json",
+            "--list",
+            "--paths",
+            "--output",
+            "PATH,LABEL,FSTYPE,TYPE,MOUNTPOINTS",
+        ])
+        .output()
+        .map_err(|e| format!("无法运行 lsblk：{e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "无法读取磁盘列表：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    serde_json::from_slice::<BlockDeviceList>(&output.stdout)
+        .map(|list| list.blockdevices)
+        .map_err(|e| format!("无法解析磁盘列表：{e}"))
+}
+
+#[cfg(target_os = "linux")]
+fn mountable_from(devices: &[BlockDevice]) -> Vec<MountableVolume> {
+    devices
+        .iter()
+        .filter_map(|device| {
+            let fs = device.fstype.as_deref().filter(|fs| {
+                !fs.is_empty()
+                    && *fs != "swap"
+                    && *fs != "crypto_LUKS"
+                    && *fs != "LVM2_member"
+                    && *fs != "linux_raid_member"
+            })?;
+            if !["part", "disk", "crypt", "lvm"].contains(&device.kind.as_str())
+                || device
+                    .mountpoints
+                    .iter()
+                    .any(|p| p.as_ref().is_some_and(|p| !p.is_empty()))
+            {
+                return None;
+            }
+            Some(MountableVolume {
+                device: device.path.clone(),
+                name: device
+                    .label
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&device.path)
+                    .into(),
+                filesystem: fs.into(),
+            })
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+pub fn mountable() -> Result<Vec<MountableVolume>, String> {
+    Ok(mountable_from(&block_devices()?))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn mountable() -> Result<Vec<MountableVolume>, String> {
+    Ok(Vec::new())
+}
+
+#[cfg(target_os = "linux")]
+pub fn mount(device: &str) -> Result<String, String> {
+    if !mountable()?.iter().any(|volume| volume.device == device) {
+        return Err("磁盘不可挂载或已断开".into());
+    }
+    let output = std::process::Command::new("udisksctl")
+        .args(["mount", "--block-device", device])
+        .output()
+        .map_err(|e| format!("无法运行 udisksctl，请确认已安装 UDisks2：{e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "无法挂载磁盘：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    for _ in 0..10 {
+        if let Some(path) = block_devices()?
+            .into_iter()
+            .find(|item| item.path == device)
+            .and_then(|item| {
+                item.mountpoints
+                    .into_iter()
+                    .flatten()
+                    .find(|path| path.starts_with('/'))
+            })
+        {
+            return Ok(path);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    Err("磁盘已挂载，但无法确定挂载位置；请刷新设备列表。".into())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn mount(_device: &str) -> Result<String, String> {
+    Err("当前系统不支持此挂载操作".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn finds_only_unmounted_filesystems() {
+        let data = r#"{"blockdevices":[{"path":"/dev/a1","label":"Data","fstype":"ext4","type":"part","mountpoints":[null]},{"path":"/dev/a2","label":null,"fstype":"ntfs","type":"part","mountpoints":["/mnt/data"]},{"path":"/dev/a3","label":null,"fstype":"swap","type":"part","mountpoints":[]},{"path":"/dev/a4","label":null,"fstype":"crypto_LUKS","type":"part","mountpoints":[]}]}"#;
+        let devices: BlockDeviceList = serde_json::from_str(data).unwrap();
+        let found = mountable_from(&devices.blockdevices);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].device, "/dev/a1");
+        assert_eq!(found[0].name, "Data");
+    }
 
     #[test]
     fn only_exactly_matching_ejectable_volumes_are_allowed() {

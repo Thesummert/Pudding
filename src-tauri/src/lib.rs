@@ -167,6 +167,16 @@ async fn list_volumes() -> Result<Vec<volumes::Volume>, String> {
 }
 
 #[tauri::command]
+async fn list_mountable_volumes() -> Result<Vec<volumes::MountableVolume>, String> {
+    blocking(volumes::mountable).await
+}
+
+#[tauri::command]
+async fn mount_volume(device: String) -> Result<String, String> {
+    blocking(move || volumes::mount(&device)).await
+}
+
+#[tauri::command]
 async fn eject_volume(path: String) -> Result<(), String> {
     blocking(move || volumes::eject(&path)).await
 }
@@ -460,6 +470,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_info,
             list_volumes,
+            list_mountable_volumes,
+            mount_volume,
             eject_volume,
             connect_smb,
             list_smb_shares,
