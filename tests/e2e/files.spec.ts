@@ -140,6 +140,21 @@ test('selection, keyboard navigation and preview disclosure', async ({ page }) =
   await expect(page.getByText('演示模式', { exact: true })).toBeVisible();
 });
 
+test('opens multiple selected files from the context menu and keyboard', async ({ page }) => {
+  const first = page.getByRole('button', { name: '开始使用.md', exact: true });
+  const second = page.getByRole('button', { name: '灵感笔记.txt', exact: true });
+  await first.click();
+  await second.click({ modifiers: ['Control'] });
+  await second.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: '打开选中的文件' }).click();
+  await expect(page.getByRole('alert')).toContainText('2 个打开失败');
+  await expect(page.getByRole('alert')).toContainText('开始使用.md');
+  await expect(page.getByRole('alert')).toContainText('灵感笔记.txt');
+  await first.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('alert')).toContainText('2 个打开失败');
+});
+
 test('image decoding, switching, actual size and closing with Escape', async ({ page }) => {
   await page.getByRole('button', { name: 'Pictures', exact: true }).dblclick();
   const image = page.getByRole('button', { name: '海岸.svg', exact: true });

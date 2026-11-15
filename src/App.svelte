@@ -19,6 +19,7 @@
   import { virtualWindow } from './lib/virtual-list';
   import { transferEstimate } from './lib/transfer-progress';
   import { backgrounds, type BackgroundImage } from './lib/backgrounds';
+  import { openSelectedFiles } from './lib/open-selected';
 
   type Preferences = { view: ViewMode; hidden: boolean; inspector: boolean; size: number; dark: boolean; terminal: string; customTerminal: string; backgroundId: string; backgroundBlur: number; backgroundOpacity: number; backgroundRandomChance: number };
   function loadPreferences(): Preferences {
@@ -583,6 +584,23 @@
     catch (error) { notify(errorMessage(error), true); }
   }
 
+  async function openSelection() {
+    if (busy) return;
+    if (selectedEntries.length === 1) { await openEntry(selectedEntries[0]); return; }
+    const entriesToOpen = [...selectedEntries];
+    if (!entriesToOpen.some((entry) => !entry.isDir)) return;
+    context = null;
+    operating = true;
+    try {
+      const { attempted, skipped, failures } = await openSelectedFiles(entriesToOpen, api.open);
+      const skippedText = skipped ? `，跳过 ${skipped} 个文件夹` : '';
+      if (failures.length) {
+        const names = failures.slice(0, 3).map((failure) => failure.name).join('、');
+        notify(`已打开 ${attempted - failures.length} 个文件，${failures.length} 个打开失败（${names}${failures.length > 3 ? '等' : ''}）：${errorMessage(failures[0].error)}${skippedText}`, true);
+      } else notify(`已打开 ${attempted} 个文件${skippedText}`);
+    } finally { operating = false; }
+  }
+
   function openWith(entry: FileEntry) {
     context = null;
     openWithEntry = entry;
@@ -984,7 +1002,7 @@
     else if (key === 'f2') { event.preventDefault(); openDialog('rename'); }
     else if (key === 'delete') { event.preventDefault(); confirmTrash(event.shiftKey); }
     else if (event.code === 'Space' && !event.repeat && !event.altKey && !event.ctrlKey && !event.metaKey && focused && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); previewImage(focused); }
-    else if (key === 'enter' && focused && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); void openEntry(focused); }
+    else if (key === 'enter' && selectedEntries.length && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); void openSelection(); }
     else if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key) && entries.length && (target.closest('.file-area') || target === document.body)) {
       event.preventDefault();
       const columns = windowed.columns;
@@ -1173,7 +1191,7 @@
             <div class="inspector-name"><h2>{selected.size > 1 ? `${selected.size} 个项目` : focused?.name ?? title}</h2><span class="type-badge">{selected.size > 1 ? '多项选择' : focused ? fileKind(focused) : '当前文件夹'}</span></div>
             <div class="inspector-divider"></div>
             <dl class="properties"><div><dt>位置</dt><dd class="path-value" title={focused?.path ?? directory?.path}>{selected.size > 1 ? directory?.path : focused?.path ?? directory?.path ?? '—'}</dd></div>{#if focused}<div><dt>类型</dt><dd>{fileKind(focused)}</dd></div>{#if !focused.isDir}<div><dt>大小</dt><dd>{formatEntrySize(focused)}</dd></div>{/if}<div><dt>修改时间</dt><dd>{formatDate(focused.modified)}</dd></div>{:else if selected.size > 1}<div><dt>已选项目</dt><dd>{selected.size} 项</dd></div><div><dt>文件大小</dt><dd>{formatSize(selectedSize)}</dd></div>{:else}<div><dt>内容</dt><dd>{directory?.entries.filter((e) => preferences.hidden || !e.hidden).length ?? 0} 个项目</dd></div><div><dt>文件夹</dt><dd>{directory?.entries.filter((e) => e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div><div><dt>文件</dt><dd>{directory?.entries.filter((e) => !e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div>{/if}</dl>
-            {#if focused}<button class="button inspector-open" onclick={() => focused!.isDir ? openEntry(focused!) : openExternal(focused!)} disabled={busy}><ExternalLink size={15} />{focused.isDir ? '打开文件夹' : '使用默认应用打开'}<ArrowRight size={14} /></button>{/if}
+            {#if focused}<button class="button inspector-open" onclick={() => focused!.isDir ? openEntry(focused!) : openExternal(focused!)} disabled={busy}><ExternalLink size={15} />{focused.isDir ? '打开文件夹' : '使用默认应用打开'}<ArrowRight size={14} /></button>{:else if selectedEntries.some((entry) => !entry.isDir)}<button class="button inspector-open" onclick={openSelection} disabled={busy}><ExternalLink size={15} />打开选中的文件<ArrowRight size={14} /></button>{/if}
             <div class="inspector-tip"><span class="tip-label"><Info size={14} />小提示</span><p>{selected.size ? `按住 ${shortcutModifier} 点选多个项目，按 Shift 连续选择，或拖动空白处框选。` : '单击查看文件信息，双击打开。也可以在地址栏中输入路径。'}</p></div>
           </aside>
         {/if}
@@ -1213,6 +1231,7 @@
     {#if focused && !canPreview(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Info size={16} /><span>查看基本信息</span><kbd>Space</kbd></button>{/if}
     {#if focused && !isImage(focused) && canPreview(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览</span><kbd>Space</kbd></button>{/if}
     {#if focused && !isImage(focused)}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>打开</span><kbd>Enter</kbd></button>{/if}
+    {#if selectedEntries.length > 1 && selectedEntries.some((entry) => !entry.isDir)}<button role="menuitem" onclick={openSelection}><ExternalLink size={16} /><span>打开选中的文件</span><kbd>Enter</kbd></button>{/if}
     {#if desktop && focused && !focused.isDir}<button role="menuitem" onclick={() => void openWith(focused!)}><ExternalLink size={16} /><span>选择其他应用打开…</span></button>{/if}
     {#if directory && (focused?.isDir || selected.size === 0)}
       <button role="menuitem" aria-haspopup="menu" aria-expanded={openElsewhereMenuOpen} onclick={(event) => { event.stopPropagation(); openElsewhereMenuOpen = !openElsewhereMenuOpen; sugarMenuOpen = false; }} onmouseenter={() => { openElsewhereMenuOpen = true; sugarMenuOpen = false; }} onkeydown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openElsewhereMenuOpen = true; sugarMenuOpen = false; void tick().then(() => document.querySelector<HTMLButtonElement>('.open-elsewhere-submenu button')?.focus()); } }}><ExternalLink size={16} /><span>在其他地方打开</span><ChevronRight size={14} /></button>
