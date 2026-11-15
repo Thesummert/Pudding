@@ -192,6 +192,7 @@
   let permanentDelete = $state(false);
   let helpDialog: HTMLDialogElement;
   let settingsDialog: HTMLDialogElement;
+  let settingsCategory = $state<'appearance' | 'files' | 'terminal'>('appearance');
   let smbDialog: HTMLDialogElement;
   let smbAddress = $state('');
   let smbUsername = $state('');
@@ -1214,9 +1215,15 @@
   </dialog>
   <dialog class="modal settings-modal" bind:this={settingsDialog} aria-labelledby="settings-title">
     <div class="modal-top"><span class="modal-icon"><Settings size={24} /></span><button class="icon-button" title="关闭设置" aria-label="关闭设置" onclick={() => settingsDialog.close()}><X size={18} /></button></div>
-    <h2 id="settings-title">设置</h2><p>调整文件浏览的外观与显示方式，修改会自动保存。</p>
+    <h2 id="settings-title">设置</h2><p>按栏目调整偏好，修改会自动保存。</p>
+    <nav class="settings-nav" aria-label="设置栏目">
+      <button type="button" class:active={settingsCategory === 'appearance'} aria-pressed={settingsCategory === 'appearance'} onclick={() => settingsCategory = 'appearance'}><Sun size={16} />外观与背景</button>
+      <button type="button" class:active={settingsCategory === 'files'} aria-pressed={settingsCategory === 'files'} onclick={() => settingsCategory = 'files'}><LayoutGrid size={16} />文件显示</button>
+      <button type="button" class:active={settingsCategory === 'terminal'} aria-pressed={settingsCategory === 'terminal'} onclick={() => settingsCategory = 'terminal'}><Terminal size={16} />终端</button>
+    </nav>
     <div class="settings-list">
-      <h3 class="settings-section">外观与背景</h3>
+      <section hidden={settingsCategory !== 'appearance'} aria-labelledby="settings-appearance">
+      <h3 class="settings-section" id="settings-appearance">外观与背景</h3>
       <label class="settings-row"><span><strong>外观</strong><small>选择浅色或深色界面</small></span><select aria-label="外观" value={preferences.dark ? 'dark' : 'light'} onchange={(event) => preferences.dark = event.currentTarget.value === 'dark'}><option value="light">浅色</option><option value="dark">深色</option></select></label>
       <div class="settings-row"><span><strong>背景图片</strong><small>图片保存在本机，可添加多张并选择一张使用</small></span><label class="button background-add">添加图片…<input type="file" accept="image/*" multiple onchange={addBackgrounds} /></label></div>
       {#if backgroundImages.length}
@@ -1234,15 +1241,20 @@
       <label class="settings-row"><span><strong>高斯模糊</strong><small>{preferences.backgroundBlur} px</small></span><input type="range" aria-label="背景高斯模糊" min="0" max="30" step="1" bind:value={preferences.backgroundBlur} /></label>
       <label class="settings-row"><span><strong>背景不透明度</strong><small>{preferences.backgroundOpacity}%</small></span><input type="range" aria-label="背景不透明度" min="0" max="100" step="1" bind:value={preferences.backgroundOpacity} /></label>
       <label class="settings-row"><span><strong>启动时随机切换</strong><small>每次启动的切换概率：{preferences.backgroundRandomChance}%</small></span><input type="range" aria-label="启动时随机切换概率" min="0" max="100" step="5" bind:value={preferences.backgroundRandomChance} /></label>
-      <h3 class="settings-section">文件显示</h3>
+      </section>
+      <section hidden={settingsCategory !== 'files'} aria-labelledby="settings-files">
+      <h3 class="settings-section" id="settings-files">文件显示</h3>
       <label class="settings-row"><span><strong>显示方式</strong><small>选择文件的默认显示方式</small></span><select aria-label="显示方式" value={preferences.view} onchange={(event) => { preferences.view = event.currentTarget.value as ViewMode; if (!directory || !Object.hasOwn(folderDisplays, directory.path)) view = preferences.view; }}><option value="grid">图标</option><option value="list">列表</option></select></label>
       <div class="settings-row"><span><strong>文件夹显示与排序记录</strong><small>清理各文件夹保存的显示方式和排序方式</small></span><button class="button" type="button" onclick={clearFolderDisplays}>清理记录</button></div>
       <label class="settings-row"><span><strong>显示隐藏文件</strong><small>在文件夹中显示隐藏项目</small></span><input type="checkbox" bind:checked={preferences.hidden} /></label>
       <label class="settings-row"><span><strong>显示信息面板</strong><small>显示所选项目的详细信息</small></span><input type="checkbox" bind:checked={preferences.inspector} /></label>
       <label class="settings-row"><span><strong>图标大小</strong><small>调整图标视图中的项目大小</small></span><input type="range" min="104" max="168" step="1" bind:value={preferences.size} /></label>
-      <h3 class="settings-section">终端</h3>
+      </section>
+      <section hidden={settingsCategory !== 'terminal'} aria-labelledby="settings-terminal">
+      <h3 class="settings-section" id="settings-terminal">终端</h3>
       <label class="settings-row"><span><strong>默认终端</strong><small>选择打开文件夹时使用的终端</small></span><select aria-label="默认终端" bind:value={preferences.terminal}><option value="system">系统终端</option>{#if info?.platform === 'macos'}<option value="terminal">终端</option><option value="iterm">iTerm</option><option value="warp">Warp</option>{:else if info?.platform === 'windows'}<option value="windows-terminal">Windows Terminal</option><option value="powershell">PowerShell</option><option value="cmd">命令提示符</option>{:else if info?.platform === 'linux'}<option value="gnome-terminal">GNOME Terminal</option><option value="konsole">Konsole</option><option value="xfce4-terminal">Xfce Terminal</option><option value="xterm">XTerm</option>{/if}<option value="custom" disabled={!preferences.customTerminal}>自选应用{preferences.customTerminal ? `：${basename(preferences.customTerminal)}` : ''}</option></select></label>
       <div class="settings-row"><span><strong>终端应用</strong><small title={preferences.customTerminal}>{preferences.customTerminal || '选择本机安装的终端应用'}</small></span><button class="button" type="button" onclick={chooseTerminal}>选择应用…</button></div>
+      </section>
     </div>
     <div class="modal-actions"><button class="button" onclick={() => settingsDialog.close()}>完成</button></div>
   </dialog>

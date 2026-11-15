@@ -739,6 +739,11 @@ describe('file manager interactions', () => {
     const appearance = settings.querySelector<HTMLSelectElement>('[aria-label="外观"]')!;
     appearance.value = 'dark';
     appearance.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(button('外观与背景').getAttribute('aria-pressed')).toBe('true');
+    await click(button('文件显示'));
+    expect(button('文件显示').getAttribute('aria-pressed')).toBe('true');
+    expect(settings.querySelector<HTMLElement>('#settings-appearance')!.closest('section')!.hidden).toBe(true);
+    expect(settings.querySelector<HTMLElement>('#settings-files')!.closest('section')!.hidden).toBe(false);
     const hidden = settings.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     hidden.click();
     await tick();
@@ -752,6 +757,7 @@ describe('file manager interactions', () => {
     vi.spyOn(api, 'chooseTerminal').mockResolvedValue('/Applications/My Terminal.app');
     const openTerminal = vi.spyOn(api, 'openTerminal').mockResolvedValue();
     await click(button('设置'));
+    await click(button('终端'));
     await click(button('选择应用…'));
     expect(JSON.parse(localStorage.getItem('pudding.preferences')!)).toMatchObject({ terminal: 'custom', customTerminal: '/Applications/My Terminal.app' });
     await click(button('完成'));
@@ -815,6 +821,7 @@ describe('file manager interactions', () => {
     await vi.waitFor(() => expect(button('列表视图').getAttribute('aria-pressed')).toBe('true'));
     expect(host.querySelector<HTMLSelectElement>('[aria-label="排序方式"]')!.value).toBe('size');
     await click(button('设置'));
+    await click(button('文件显示'));
     await click(button('清理记录'));
     expect(localStorage.getItem('pudding.folderDisplays')).toBeNull();
     expect(button('图标视图').getAttribute('aria-pressed')).toBe('true');

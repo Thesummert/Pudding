@@ -352,7 +352,11 @@ h1 { margin: 4px 0 3px; font-size: 22px; color: var(--heading); letter-spacing: 
 .smb-history > div { display: flex; align-items: center; gap: 6px; }
 .smb-history-address { flex: 1; min-width: 0; padding: 8px 0; color: var(--accent); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-modal { width: 480px; max-height: calc(100dvh - 40px); overflow-y: auto; }
-.settings-list { border-top: 1px solid var(--line); }
+.settings-nav { display: flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 9px; background: var(--inset); }
+.settings-nav button { display: flex; align-items: center; justify-content: center; gap: 6px; flex: 1; min-width: 0; padding: 9px 5px; border-radius: 6px; color: var(--secondary); font-size: 11px; white-space: nowrap; }
+.settings-nav button:hover { background: var(--surface-hover); }
+.settings-nav button.active { background: var(--surface); color: var(--accent); box-shadow: 0 1px 4px #23385a14; }
+.settings-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .settings-section { margin: 20px 0 0; color: var(--heading); font-size: 13px; }
 .background-add { cursor: pointer; }
 .background-add input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
