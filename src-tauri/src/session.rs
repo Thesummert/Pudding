@@ -3,7 +3,10 @@ use std::{
     fs::{self, File, OpenOptions},
     io,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
 };
 
 use crate::filesystem;
@@ -12,6 +15,7 @@ pub struct Session {
     _lock: Option<File>,
     last_path: Option<PathBuf>,
     restore: bool,
+    background_startup: AtomicBool,
     windows: Mutex<HashMap<String, String>>,
 }
 
@@ -29,6 +33,7 @@ impl Session {
             _lock: Some(lock),
             last_path: Some(data_dir.join("last-directory")),
             restore,
+            background_startup: AtomicBool::new(restore),
             windows: Mutex::new(HashMap::new()),
         })
     }
@@ -38,6 +43,7 @@ impl Session {
             _lock: None,
             last_path: None,
             restore: false,
+            background_startup: AtomicBool::new(false),
             windows: Mutex::new(HashMap::new()),
         }
     }
@@ -49,6 +55,10 @@ impl Session {
         let path = fs::read_to_string(self.last_path.as_ref()?).ok()?;
         filesystem::read_directory(&path).ok()?;
         Some(path)
+    }
+
+    pub fn take_background_startup(&self) -> bool {
+        self.background_startup.swap(false, Ordering::SeqCst)
     }
 
     pub fn set_directory(&self, label: &str, path: String) {
@@ -133,10 +143,13 @@ mod tests {
     fn restores_last_closed_directory_only_without_another_instance() {
         let dir = tempfile::tempdir().unwrap();
         let first = Session::new(dir.path()).unwrap();
+        assert!(first.take_background_startup());
+        assert!(!first.take_background_startup());
         assert_eq!(first.startup_path(), None);
         first.set_directory("main", dir.path().to_string_lossy().into_owned());
         first.close_window("main");
         let second = Session::new(dir.path()).unwrap();
+        assert!(!second.take_background_startup());
         assert_eq!(second.startup_path(), None);
         drop(first);
         let third = Session::new(dir.path()).unwrap();
@@ -144,6 +157,7 @@ mod tests {
         drop(second);
         drop(third);
         let next = Session::new(dir.path()).unwrap();
+        assert!(next.take_background_startup());
         assert_eq!(
             next.startup_path(),
             Some(dir.path().to_string_lossy().into_owned())

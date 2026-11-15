@@ -48,6 +48,7 @@ export const api = {
   connectSmb: (address: string, username: string, password: string) => desktop ? invoke<string[]>('connect_smb', { address, username, password }) : Promise.reject(new Error('浏览器演示无法连接 SMB 共享。')),
   listSmbShares: (address: string, username: string, password: string) => desktop ? invoke<string[]>('list_smb_shares', { address, username, password }) : Promise.reject(new Error('浏览器演示无法连接 SMB 共享。')),
   startupDirectory: () => desktop ? invoke<string | null>('startup_directory') : Promise.resolve(null),
+  takeBackgroundStartup: () => desktop ? invoke<boolean>('take_background_startup') : Promise.resolve(true),
   takeOpenDirectories: () => desktop ? invoke<string[]>('take_open_directories') : Promise.resolve([]),
   listenOpenDirectories: (handler: () => void) => desktop ? getCurrentWebview().listen('open-directories', handler) : Promise.resolve(() => {}),
   setWindowDirectory: (path: string) => desktop ? invoke<void>('set_window_directory', { path }) : Promise.resolve(),

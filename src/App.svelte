@@ -31,20 +31,47 @@
   }
 
   let preferences = $state(loadPreferences());
+  let savedPreferences = { ...preferences };
   let backgroundImages = $state<Array<BackgroundImage & { url: string }>>([]);
   let backgroundError = $state('');
+  let backgroundRevision = 0;
   let backgroundUrl = $derived(backgroundImages.find((image) => image.id === preferences.backgroundId)?.url ?? '');
   onMount(() => {
     let alive = true;
-    void backgrounds.list().then((images) => {
-      if (alive) {
-        const currentIds = new Set(backgroundImages.map((image) => image.id));
-        backgroundImages = [...backgroundImages, ...images.filter((image) => !currentIds.has(image.id)).map((image) => ({ ...image, url: URL.createObjectURL(image.image) }))];
-        if (preferences.backgroundId && Math.random() * 100 < preferences.backgroundRandomChance) chooseRandomBackground();
+    async function refreshBackgrounds() {
+      const current = ++backgroundRevision;
+      try {
+        const images = await backgrounds.list();
+        if (!alive || current !== backgroundRevision) return;
+        const existing = new Map(backgroundImages.map((image) => [image.id, image]));
+        const ids = new Set(images.map((image) => image.id));
+        for (const image of backgroundImages) if (!ids.has(image.id)) URL.revokeObjectURL(image.url);
+        backgroundImages = images.map((image) => existing.get(image.id) ?? { ...image, url: URL.createObjectURL(image.image) });
+      } catch { if (alive && current === backgroundRevision) backgroundError = '无法读取背景图片列表。'; }
+    }
+    function syncBackgrounds(event: StorageEvent) {
+      if (event.key === 'pudding.preferences') {
+        const latest = loadPreferences();
+        for (const key of ['backgroundId', 'backgroundBlur', 'backgroundOpacity', 'backgroundRandomChance'] as const) {
+          if (preferences[key] === savedPreferences[key]) {
+            // Assign separately to preserve the types of the preference fields.
+            Object.assign(preferences, { [key]: latest[key] });
+            Object.assign(savedPreferences, { [key]: latest[key] });
+          }
+        }
       }
-    }).catch(() => { if (alive) backgroundError = '无法读取背景图片列表。'; });
-    return () => { alive = false; for (const image of backgroundImages) URL.revokeObjectURL(image.url); };
+      if (event.key === 'pudding.backgrounds' || (event.key === 'pudding.preferences' && preferences.backgroundId && !backgroundImages.some((image) => image.id === preferences.backgroundId))) void refreshBackgrounds();
+    }
+    window.addEventListener('storage', syncBackgrounds);
+    void (async () => {
+      const [allowRandom] = await Promise.all([api.takeBackgroundStartup().catch(() => false), refreshBackgrounds()]);
+      if (alive && allowRandom && preferences.backgroundId && Math.random() * 100 < preferences.backgroundRandomChance) chooseRandomBackground();
+    })();
+    return () => { alive = false; backgroundRevision++; window.removeEventListener('storage', syncBackgrounds); for (const image of backgroundImages) URL.revokeObjectURL(image.url); };
   });
+  function signalBackgroundChange() {
+    try { localStorage.setItem('pudding.backgrounds', crypto.randomUUID()); } catch { /* Optional cross-window sync. */ }
+  }
   async function addBackgrounds(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     const files = Array.from(input.files ?? []);
@@ -55,17 +82,21 @@
       const image = { id: crypto.randomUUID(), name: file.name, image: file };
       try {
         await backgrounds.add(image);
+        backgroundRevision++;
         backgroundImages = [...backgroundImages, { ...image, url: URL.createObjectURL(file) }];
         if (!preferences.backgroundId) preferences.backgroundId = image.id;
+        signalBackgroundChange();
       } catch { backgroundError = '保存图片失败，请检查可用存储空间。'; break; }
     }
   }
   async function removeBackground(image: BackgroundImage & { url: string }) {
     try {
       await backgrounds.remove(image.id);
+      backgroundRevision++;
       backgroundImages = backgroundImages.filter((item) => item.id !== image.id);
       if (preferences.backgroundId === image.id) preferences.backgroundId = '';
       URL.revokeObjectURL(image.url);
+      signalBackgroundChange();
       backgroundError = '';
     } catch { backgroundError = '删除背景图片失败。'; }
   }
@@ -203,6 +234,7 @@
   let permanentDelete = $state(false);
   let helpDialog: HTMLDialogElement;
   let settingsDialog: HTMLDialogElement;
+  let settingsOpen = $state(false);
   let settingsCategory = $state<'appearance' | 'files' | 'terminal'>('appearance');
   let smbDialog: HTMLDialogElement;
   let smbAddress = $state('');
@@ -272,7 +304,15 @@
   });
 
   $effect(() => {
-    try { localStorage.setItem('pudding.preferences', JSON.stringify(preferences)); } catch { /* Optional persistence. */ }
+    const current = { ...preferences };
+    const changed = (Object.keys(current) as Array<keyof Preferences>).filter((key) => current[key] !== savedPreferences[key]);
+    if (!changed.length) return;
+    try {
+      const latest = loadPreferences();
+      for (const key of changed) Object.assign(latest, { [key]: current[key] });
+      localStorage.setItem('pudding.preferences', JSON.stringify(latest));
+      savedPreferences = current;
+    } catch { /* Optional persistence. */ }
   });
   $effect(() => {
     try { localStorage.setItem('pudding.pinnedFolders', JSON.stringify(pinnedFolders)); } catch { /* Optional persistence. */ }
@@ -1045,7 +1085,7 @@
       </div>
     <div class="header-actions">
       {#if !desktop}<span class="demo-badge" title="浏览器中使用示例数据；桌面版连接真实文件系统">演示模式</span>{:else}<span class="desktop-badge"><span class="status-dot"></span>本地工作空间</span>{/if}
-      <button class="icon-button" title="设置" aria-label="设置" onclick={() => settingsDialog.showModal()}><Settings size={18} /></button>
+      <button class="icon-button" title="设置" aria-label="设置" onclick={() => { settingsOpen = true; settingsDialog.showModal(); }}><Settings size={18} /></button>
       <button class="icon-button" title="快捷键与帮助" aria-label="快捷键与帮助" onclick={() => helpDialog.showModal()}><Keyboard size={18} /></button>
       <button class="icon-button" title={preferences.dark ? '切换浅色外观' : '切换深色外观'} aria-label={preferences.dark ? '切换浅色外观' : '切换深色外观'} onclick={() => preferences.dark = !preferences.dark}>{#if preferences.dark}<Sun size={18} />{:else}<Moon size={18} />{/if}</button>
     </div>
@@ -1282,7 +1322,7 @@
       <div class="modal-actions"><button type="button" class="button" onclick={() => smbDialog.close()} disabled={smbConnecting}>取消</button><button class="button primary" type="submit" disabled={smbConnecting}>{#if smbConnecting}<LoaderCircle size={16} class="spin" />{/if}连接</button></div>
     </form>
   </dialog>
-  <dialog class="modal settings-modal" bind:this={settingsDialog} aria-labelledby="settings-title">
+  <dialog class="modal settings-modal" bind:this={settingsDialog} aria-labelledby="settings-title" onclose={() => settingsOpen = false}>
     <div class="modal-top"><span class="modal-icon"><Settings size={24} /></span><button class="icon-button" title="关闭设置" aria-label="关闭设置" onclick={() => settingsDialog.close()}><X size={18} /></button></div>
     <h2 id="settings-title">设置</h2><p>按栏目调整偏好，修改会自动保存。</p>
     <nav class="settings-nav" aria-label="设置栏目">
@@ -1300,7 +1340,7 @@
           <div class="background-list-actions"><button type="button" class:active={!preferences.backgroundId} aria-pressed={!preferences.backgroundId} onclick={() => preferences.backgroundId = ''}>不使用背景</button><button type="button" onclick={chooseRandomBackground}>随机选择</button></div>
           {#each backgroundImages as image (image.id)}
             <div class="background-item" class:active={preferences.backgroundId === image.id}>
-              <button type="button" class="background-choice" aria-label={`使用背景 ${image.name}`} aria-pressed={preferences.backgroundId === image.id} onclick={() => preferences.backgroundId = image.id}><img src={image.url} alt="" /><span title={image.name}>{image.name}</span></button>
+              <button type="button" class="background-choice" aria-label={`使用背景 ${image.name}`} aria-pressed={preferences.backgroundId === image.id} onclick={() => preferences.backgroundId = image.id}>{#if settingsOpen}<img src={image.url} alt="" loading="lazy" decoding="async" />{/if}<span title={image.name}>{image.name}</span></button>
               <button type="button" class="icon-button compact" aria-label={`移除背景 ${image.name}`} title="移除图片" onclick={() => void removeBackground(image)}><X size={15} /></button>
             </div>
           {/each}
@@ -1309,7 +1349,7 @@
       {#if backgroundError}<p class="background-error" role="alert">{backgroundError}</p>{/if}
       <label class="settings-row"><span><strong>高斯模糊</strong><small>{preferences.backgroundBlur} px</small></span><input type="range" aria-label="背景高斯模糊" min="0" max="30" step="1" bind:value={preferences.backgroundBlur} /></label>
       <label class="settings-row"><span><strong>背景不透明度</strong><small>{preferences.backgroundOpacity}%</small></span><input type="range" aria-label="背景不透明度" min="0" max="100" step="1" bind:value={preferences.backgroundOpacity} /></label>
-      <label class="settings-row"><span><strong>启动时随机切换</strong><small>每次启动的切换概率：{preferences.backgroundRandomChance}%</small></span><input type="range" aria-label="启动时随机切换概率" min="0" max="100" step="5" bind:value={preferences.backgroundRandomChance} /></label>
+      <label class="settings-row"><span><strong>启动时随机切换</strong><small>无其他实例运行时的切换概率：{preferences.backgroundRandomChance}%</small></span><input type="range" aria-label="启动时随机切换概率" min="0" max="100" step="5" bind:value={preferences.backgroundRandomChance} /></label>
       </section>
       <section hidden={settingsCategory !== 'files'} aria-labelledby="settings-files">
       <h3 class="settings-section" id="settings-files">文件显示</h3>

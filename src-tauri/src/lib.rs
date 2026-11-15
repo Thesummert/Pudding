@@ -215,6 +215,11 @@ fn startup_directory(state: tauri::State<'_, session::Session>) -> Option<String
 }
 
 #[tauri::command]
+fn take_background_startup(state: tauri::State<'_, session::Session>) -> bool {
+    state.take_background_startup()
+}
+
+#[tauri::command]
 fn set_window_directory(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, session::Session>,
@@ -476,6 +481,7 @@ pub fn run() {
             connect_smb,
             list_smb_shares,
             startup_directory,
+            take_background_startup,
             take_open_directories,
             set_window_directory,
             watch_directory,
