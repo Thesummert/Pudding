@@ -11,6 +11,7 @@
   import ImagePreviewDialog from './lib/ImagePreviewDialog.svelte';
   import FilePreviewDialog from './lib/FilePreviewDialog.svelte';
   import FileInfoDialog from './lib/FileInfoDialog.svelte';
+  import MediaDetails from './lib/MediaDetails.svelte';
   import { api, desktop } from './lib/api';
   import { basename, breadcrumbs, fileKind, formatDate, formatSize, formatEntrySize, isImage, isVideo, canPreview, visibleEntries } from './lib/files';
   import type { AppInfo, Clipboard, DirectoryListing, FileEntry, MountableVolume, SortKey, ViewMode } from './lib/types';
@@ -280,6 +281,7 @@
   let sugarRequest = 0;
   let optionsOpen = $state(false);
   let preview = $state<FileEntry | null>(null);
+  let infoEntry = $state<FileEntry | null>(null);
 
   const placeIcons: Record<string, typeof Home> = { home: Home, desktop: Monitor, documents: FileText, downloads: Download, pictures: Image, music: Music2, videos: Film };
   const folderLabels: Record<string, string> = { Desktop: '桌面', Documents: '文档', Downloads: '下载', Music: '音乐', Pictures: '图片', Videos: '视频', Projects: '项目', Archive: '归档' };
@@ -1255,7 +1257,7 @@
             {/if}
             <div class="inspector-name"><h2>{selected.size > 1 ? `${selected.size} 个项目` : focused?.name ?? title}</h2><span class="type-badge">{selected.size > 1 ? '多项选择' : focused ? fileKind(focused) : '当前文件夹'}</span></div>
             <div class="inspector-divider"></div>
-            <dl class="properties"><div><dt>位置</dt><dd class="path-value" title={focused?.path ?? directory?.path}>{selected.size > 1 ? directory?.path : focused?.path ?? directory?.path ?? '—'}</dd></div>{#if focused}<div><dt>类型</dt><dd>{fileKind(focused)}</dd></div>{#if !focused.isDir}<div><dt>大小</dt><dd>{formatEntrySize(focused)}</dd></div>{/if}<div><dt>修改时间</dt><dd>{formatDate(focused.modified)}</dd></div>{:else if selected.size > 1}<div><dt>已选项目</dt><dd>{selected.size} 项</dd></div><div><dt>文件大小</dt><dd>{formatSize(selectedSize)}</dd></div>{:else}<div><dt>内容</dt><dd>{directory?.entries.filter((e) => preferences.hidden || !e.hidden).length ?? 0} 个项目</dd></div><div><dt>文件夹</dt><dd>{directory?.entries.filter((e) => e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div><div><dt>文件</dt><dd>{directory?.entries.filter((e) => !e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div>{/if}</dl>
+            <dl class="properties"><div><dt>位置</dt><dd class="path-value" title={focused?.path ?? directory?.path}>{selected.size > 1 ? directory?.path : focused?.path ?? directory?.path ?? '—'}</dd></div>{#if focused}<div><dt>类型</dt><dd>{fileKind(focused)}</dd></div>{#if !focused.isDir}<div><dt>大小</dt><dd>{formatEntrySize(focused)}</dd></div>{/if}<div><dt>修改时间</dt><dd>{formatDate(focused.modified)}</dd></div><MediaDetails entry={focused} />{:else if selected.size > 1}<div><dt>已选项目</dt><dd>{selected.size} 项</dd></div><div><dt>文件大小</dt><dd>{formatSize(selectedSize)}</dd></div>{:else}<div><dt>内容</dt><dd>{directory?.entries.filter((e) => preferences.hidden || !e.hidden).length ?? 0} 个项目</dd></div><div><dt>文件夹</dt><dd>{directory?.entries.filter((e) => e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div><div><dt>文件</dt><dd>{directory?.entries.filter((e) => !e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div>{/if}</dl>
             {#if focused}<button class="button inspector-open" onclick={() => focused!.isDir ? openEntry(focused!) : openExternal(focused!)} disabled={busy}><ExternalLink size={15} />{focused.isDir ? '打开文件夹' : '使用默认应用打开'}<ArrowRight size={14} /></button>{:else if selectedEntries.some((entry) => !entry.isDir)}<button class="button inspector-open" onclick={openSelection} disabled={busy}><ExternalLink size={15} />打开选中的文件<ArrowRight size={14} /></button>{/if}
             <div class="inspector-tip"><span class="tip-label"><Info size={14} />小提示</span><p>{selected.size ? `按住 ${shortcutModifier} 点选多个项目，按 Shift 连续选择，或拖动空白处框选。` : '单击查看文件信息，双击打开。也可以在地址栏中输入路径。'}</p></div>
           </aside>
@@ -1293,7 +1295,7 @@
 
   {#if context}{#key context}<div class="context-menu" role="menu" use:fitMenu={context}>
     {#if focused && isImage(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览图片</span><kbd>Space</kbd></button><button role="menuitem" onclick={() => { context = null; void openExternal(focused!); }}><ExternalLink size={16} /><span>使用默认应用打开</span></button>{/if}
-    {#if focused && !canPreview(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Info size={16} /><span>查看基本信息</span><kbd>Space</kbd></button>{/if}
+    {#if focused}<button role="menuitem" onclick={() => { infoEntry = focused; context = null; }}><Info size={16} /><span>详细信息</span></button>{/if}
     {#if focused && !isImage(focused) && canPreview(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览</span><kbd>Space</kbd></button>{/if}
     {#if focused && !isImage(focused)}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>打开</span><kbd>Enter</kbd></button>{/if}
     {#if selectedEntries.length > 1 && selectedEntries.some((entry) => !entry.isDir)}<button role="menuitem" onclick={openSelection}><ExternalLink size={16} /><span>打开选中的文件</span><kbd>Enter</kbd></button>{/if}
@@ -1329,6 +1331,7 @@
   {#if transferConflict}<ConflictDialog conflicts={transferConflict.paths} onchoose={(choice) => transferConflict?.resolve(choice)} />{/if}
   {#if openWithEntry}<OpenWithDialog entry={openWithEntry} onclose={() => openWithEntry = null} />{/if}
   {#if dialog}<NameDialog mode={dialog.mode} initial={dialog.mode === 'rename' ? dialog.entry?.name : ''} busy={operating} error={dialogError} onsubmit={submitName} onclose={() => { if (!operating) dialog = null; }} />{/if}
+  {#if infoEntry}<FileInfoDialog entry={infoEntry} onclose={() => infoEntry = null} />{/if}
   {#if preview}{#if isImage(preview)}<ImagePreviewDialog entries={entries.filter(isImage)} initial={preview} onclose={() => preview = null} onopen={openExternal} />{:else if canPreview(preview)}<FilePreviewDialog entry={preview} onclose={() => preview = null} onopen={openExternal} />{:else}<FileInfoDialog entry={preview} onclose={() => preview = null} />{/if}{/if}
 
   <dialog class="modal trash-modal" bind:this={trashDialog} oncancel={(event) => { if (operating) event.preventDefault(); }}><div class="modal-top"><span class="modal-icon danger"><Trash2 size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => trashDialog.close()} disabled={operating}><X size={18} /></button></div><h2>{permanentDelete ? '永久删除？' : '移入回收站？'}</h2><p>{permanentDelete ? `将永久删除选中的 ${selected.size} 个项目，此操作无法撤销。` : `将选中的 ${selected.size} 个项目移入系统回收站。你可以稍后从系统回收站中恢复。`}</p><div class="modal-actions"><button class="button" onclick={() => trashDialog.close()} disabled={operating}>取消</button><button class="button danger-button" onclick={moveToTrash} disabled={busy}>{#if operating}<LoaderCircle size={16} class="spin" />{/if}{permanentDelete ? '永久删除' : '移入回收站'}</button></div></dialog>

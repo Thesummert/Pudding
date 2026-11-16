@@ -35,7 +35,7 @@ folders[`${home}/Downloads`] = [entry(`${home}/Downloads`, '设计素材.zip', f
 folders[`${home}/Pictures`] = [entry(`${home}/Pictures`, '旅行', true), entry(`${home}/Pictures`, '壁纸', true), entry(`${home}/Pictures`, '海岸.svg', false, coast.length), entry(`${home}/Pictures`, '山间.svg', false, mountains.length)];
 folders[`${home}/Pictures/旅行`] = [];
 folders[`${home}/Pictures/壁纸`] = [];
-folders[`${home}/Videos`] = [entry(`${home}/Videos`, '示例视频.mp4', false, 2048)];
+folders[`${home}/Videos`] = [entry(`${home}/Videos`, '示例视频.mp4', false, 2011)];
 folders[`${home}/Projects`] = [entry(`${home}/Projects`, 'pudding', true), entry(`${home}/Projects`, 'README.md', false, 3120, 2)];
 folders[`${home}/Projects/pudding`] = [entry(`${home}/Projects/pudding`, 'package.json', false, 1024, 4)];
 

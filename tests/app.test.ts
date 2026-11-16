@@ -495,6 +495,23 @@ describe('file manager interactions', () => {
     expect(host.querySelector('.info-preview-modal')).toBeNull();
   });
 
+  it('opens details for files and folders from the context menu', async () => {
+    vi.spyOn(api, 'directorySize').mockResolvedValue(1024);
+    await contextMenu('Documents');
+    await click(menuItem('详细信息'));
+    await vi.waitFor(() => expect(host.querySelector('.info-preview-modal')?.textContent).toContain('1 KB'));
+    expect(host.querySelector('.context-menu')).toBeNull();
+    await click(button('关闭信息'));
+    await doubleClick('Pictures');
+    await vi.waitFor(() => expect(button('海岸.svg')).toBeTruthy());
+    await contextMenu('海岸.svg');
+    await click(menuItem('详细信息'));
+    expect(host.querySelector('.info-preview-modal')?.textContent).toContain('海岸.svg');
+    expect(host.querySelector('.info-preview-modal')?.textContent).toContain('媒体信息');
+    await click(button('关闭信息'));
+    expect(host.querySelector('.info-preview-modal')).toBeNull();
+  });
+
   it('opens a text preview from the context menu', async () => {
     await contextMenu('开始使用.md');
     await click(menuItem('预览'));
@@ -573,7 +590,7 @@ describe('file manager interactions', () => {
     const current = URL.createObjectURL(new Blob(['current']));
     let resolveImage!: (url: string) => void;
     const pending = new Promise<string>((resolve) => resolveImage = resolve);
-    vi.spyOn(api, 'image').mockReturnValueOnce(pending).mockResolvedValueOnce(current);
+    vi.spyOn(api, 'image').mockImplementation((path) => path.endsWith('海岸.svg') ? pending : Promise.resolve(current));
     const revoke = vi.spyOn(URL, 'revokeObjectURL');
     await doubleClick('Pictures');
     await vi.waitFor(() => expect(button('海岸.svg')).toBeTruthy());

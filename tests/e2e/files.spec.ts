@@ -326,3 +326,17 @@ test('large directories stay scrollable in grid and list views', async ({ page }
   await page.keyboard.press('ArrowUp');
   await expect(page.getByRole('button', { name: '大型目录 0598', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });
+
+test('inspector shows image and video details when selected', async ({ page }) => {
+  const inspector = page.getByRole('complementary', { name: '信息面板' });
+  await page.getByRole('button', { name: 'Pictures', exact: true }).dblclick();
+  await page.getByRole('button', { name: '海岸.svg', exact: true }).click();
+  await expect(inspector.locator('div').filter({ has: page.locator('dt', { hasText: '分辨率' }) }).last()).toContainText(/\d+ × \d+ 像素/);
+  await page.getByRole('button', { name: '后退', exact: true }).click();
+  await page.getByRole('button', { name: 'Videos', exact: true }).dblclick();
+  await page.getByRole('button', { name: '示例视频.mp4', exact: true }).click();
+  await expect(inspector).toContainText('分辨率');
+  await expect(inspector).toContainText(/\d+ × \d+ 像素/);
+  await expect(inspector).toContainText(/时长\d+:\d{2}/);
+  await expect(inspector).toContainText(/平均总码率约 [\d.]+ [kM]bps/);
+});
