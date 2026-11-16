@@ -20,6 +20,7 @@
   import { transferEstimate } from './lib/transfer-progress';
   import { backgrounds, type BackgroundImage } from './lib/backgrounds';
   import { openSelectedFiles } from './lib/open-selected';
+  import { shortcutDefaults, defaultShortcuts, loadShortcuts, shortcutFromEvent, formatShortcut, type ShortcutAction } from './lib/shortcuts';
 
   type ThemeMode = 'system' | 'light' | 'dark';
   type Preferences = { view: ViewMode; hidden: boolean; inspector: boolean; size: number; theme: ThemeMode; terminal: string; customTerminal: string; backgroundId: string; backgroundBlur: number; backgroundOpacity: number; backgroundRandomChance: number };
@@ -56,6 +57,7 @@
       } catch { if (alive && current === backgroundRevision) backgroundError = '无法读取背景图片列表。'; }
     }
     function syncBackgrounds(event: StorageEvent) {
+      if (event.key === 'pudding.shortcuts') shortcuts = loadShortcuts();
       if (event.key === 'pudding.preferences') {
         const latest = loadPreferences();
         for (const key of ['theme', 'backgroundId', 'backgroundBlur', 'backgroundOpacity', 'backgroundRandomChance'] as const) {
@@ -241,7 +243,22 @@
   let helpDialog: HTMLDialogElement;
   let settingsDialog: HTMLDialogElement;
   let settingsOpen = $state(false);
-  let settingsCategory = $state<'appearance' | 'files' | 'terminal'>('appearance');
+  let settingsCategory = $state<'appearance' | 'files' | 'terminal' | 'shortcuts'>('appearance');
+  let shortcuts = $state(loadShortcuts());
+  let recordingShortcut = $state<ShortcutAction | null>(null);
+  let shortcutError = $state('');
+  function saveShortcuts() { localStorage.setItem('pudding.shortcuts', JSON.stringify(shortcuts)); }
+  function recordShortcut(event: KeyboardEvent) {
+    if (!recordingShortcut) return;
+    event.preventDefault(); event.stopPropagation();
+    if (event.key === 'Escape') { recordingShortcut = null; shortcutError = ''; return; }
+    const value = shortcutFromEvent(event);
+    if (!value) return;
+    const conflict = (Object.keys(shortcuts) as ShortcutAction[]).find(id => id !== recordingShortcut && shortcuts[id] === value);
+    if (conflict) { shortcutError = `该快捷键已用于“${shortcutDefaults[conflict][0]}”`; return; }
+    shortcuts = { ...shortcuts, [recordingShortcut]: value };
+    saveShortcuts(); recordingShortcut = null; shortcutError = '';
+  }
   let smbDialog: HTMLDialogElement;
   let smbAddress = $state('');
   let smbUsername = $state('');
@@ -1007,6 +1024,7 @@
   function keydown(event: KeyboardEvent) {
     dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey };
     shiftHeld = event.shiftKey;
+    if (recordingShortcut) { recordShortcut(event); return; }
     if (event.key === 'Escape') {
       if (marquee) { selected = new Set(marquee.initial); marquee = null; }
       dropMenu = null;
@@ -1015,39 +1033,40 @@
       if (editingAddress) editingAddress = false;
       return;
     }
-    if (preview && event.code === 'Space' && !event.altKey && !event.ctrlKey && !event.metaKey) {
+    if (preview && shortcutFromEvent(event) === shortcuts.preview) {
       event.preventDefault();
       if (!event.repeat) preview = null;
       return;
     }
     if (document.querySelector('dialog[open]')) return;
     if (showingRecent) {
-      if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); showingRecent = false; }
+      if (shortcutFromEvent(event) === shortcuts.back) { event.preventDefault(); showingRecent = false; }
       return;
     }
     const target = event.target as HTMLElement;
-    const modifier = event.ctrlKey || event.metaKey;
-    if (modifier && event.key.toLowerCase() === 't') { event.preventDefault(); newTab(); return; }
-    if (modifier && event.key.toLowerCase() === 'w') { event.preventDefault(); closeTab(activeTab); return; }
-    if (modifier && event.key.toLowerCase() === 'l') { event.preventDefault(); void editAddress(); return; }
-    if (modifier && event.key.toLowerCase() === 'f') { event.preventDefault(); searchInput.focus(); return; }
+    const binding = shortcutFromEvent(event);
+    const matches = (action: ShortcutAction) => binding === shortcuts[action];
+    if (matches('newTab')) { event.preventDefault(); newTab(); return; }
+    if (matches('closeTab')) { event.preventDefault(); closeTab(activeTab); return; }
+    if (matches('address')) { event.preventDefault(); void editAddress(); return; }
+    if (matches('search')) { event.preventDefault(); searchInput.focus(); return; }
     if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
     if (busy) return;
     const key = event.key.toLowerCase();
-    if (event.altKey && key === 'arrowleft') { event.preventDefault(); back(); }
-    else if (event.altKey && key === 'arrowright') { event.preventDefault(); forward(); }
-    else if (event.altKey && key === 'arrowup') { event.preventDefault(); up(); }
-    else if (key === 'backspace') { event.preventDefault(); up(); }
-    else if (key === 'f5' || (modifier && key === 'r')) { event.preventDefault(); refresh(); }
-    else if (modifier && event.shiftKey && key === 'n') { event.preventDefault(); openDialog('create'); }
-    else if (modifier && event.shiftKey && event.code === 'Period') { event.preventDefault(); preferences.hidden = !preferences.hidden; }
-    else if (modifier && key === 'a') { event.preventDefault(); selected = new Set(entries.map((e) => e.path)); }
-    else if (modifier && key === 'c') { event.preventDefault(); copySelection('copy'); }
-    else if (modifier && key === 'x') { event.preventDefault(); copySelection('cut'); }
-    else if (modifier && key === 'v') { event.preventDefault(); void paste(); }
-    else if (key === 'f2') { event.preventDefault(); openDialog('rename'); }
-    else if (key === 'delete') { event.preventDefault(); confirmTrash(event.shiftKey); }
-    else if (event.code === 'Space' && !event.repeat && !event.altKey && !event.ctrlKey && !event.metaKey && focused && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); previewImage(focused); }
+    if (matches('back')) { event.preventDefault(); back(); }
+    else if (matches('forward')) { event.preventDefault(); forward(); }
+    else if (matches('up')) { event.preventDefault(); up(); }
+    else if (key === 'backspace' && !Object.values(shortcuts).includes(binding ?? '')) { event.preventDefault(); up(); }
+    else if (matches('refresh')) { event.preventDefault(); refresh(); }
+    else if (matches('create')) { event.preventDefault(); openDialog('create'); }
+    else if (matches('hidden')) { event.preventDefault(); preferences.hidden = !preferences.hidden; }
+    else if (matches('selectAll')) { event.preventDefault(); selected = new Set(entries.map((e) => e.path)); }
+    else if (matches('copy')) { event.preventDefault(); copySelection('copy'); }
+    else if (matches('cut')) { event.preventDefault(); copySelection('cut'); }
+    else if (matches('paste')) { event.preventDefault(); void paste(); }
+    else if (matches('rename')) { event.preventDefault(); openDialog('rename'); }
+    else if (matches('trash') || matches('permanentDelete')) { event.preventDefault(); confirmTrash(matches('permanentDelete')); }
+    else if (matches('preview') && !event.repeat && focused && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); previewImage(focused); }
     else if (key === 'enter' && selectedEntries.length && (target.closest('.file-area') || target === document.body)) { event.preventDefault(); void openSelection(); }
     else if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key) && entries.length && (target.closest('.file-area') || target === document.body)) {
       event.preventDefault();
@@ -1156,11 +1175,11 @@
                 <button data-drop-path={crumb.path} class:drop-target={dropRegion === 'breadcrumbs' && dropTarget === crumb.path} disabled={busy} class:current={index === crumbs.length - 1} onclick={() => navigate(crumb.path)} title={crumb.path}>{info?.places.find((p) => p.path === crumb.path)?.name ?? crumb.name}</button>
               {/each}
             </nav>
-            <button class="address-edit" title={`编辑路径 (${shortcutModifier}+L)`} aria-label="编辑路径" onclick={editAddress} disabled={!directory}><Pencil size={13} /></button>
+            <button class="address-edit" title={`编辑路径 (${formatShortcut(shortcuts.address)})`} aria-label="编辑路径" onclick={editAddress} disabled={!directory}><Pencil size={13} /></button>
           {/if}
         </div>
         <button class="icon-button refresh-button" title="刷新 (F5)" aria-label="刷新" onclick={refresh} disabled={busy || !directory}><RotateCw size={17} class={loading ? 'spin' : ''} /></button>
-        <label class="search-box"><Search size={16} /><input bind:this={searchInput} bind:value={query} placeholder={searchContent ? '搜索文件名或内容' : '搜索文件名'} aria-label="搜索当前文件夹" disabled={!directory} />{#if query}<button class="clear-search" title="清除搜索" aria-label="清除搜索" onclick={() => query = ''}><X size={14} /></button>{:else}<kbd>{shortcutModifier} F</kbd>{/if}</label>
+        <label class="search-box"><Search size={16} /><input bind:this={searchInput} bind:value={query} placeholder={searchContent ? '搜索文件名或内容' : '搜索文件名'} aria-label="搜索当前文件夹" disabled={!directory} />{#if query}<button class="clear-search" title="清除搜索" aria-label="清除搜索" onclick={() => query = ''}><X size={14} /></button>{:else}<kbd>{formatShortcut(shortcuts.search)}</kbd>{/if}</label>
         <label class="search-content-option" title={desktop ? "同时搜索文本文件内容" : "文件内容搜索仅在桌面版可用"}><input type="checkbox" bind:checked={searchContent} disabled={!desktop || !directory} />搜索内容</label>
       </div>
 
@@ -1179,7 +1198,7 @@
               <div class="view-switch" aria-label="显示方式"><button class:active={view === 'grid'} title="图标视图" aria-label="图标视图" aria-pressed={view === 'grid'} onclick={() => setView('grid')}><LayoutGrid size={16} /></button><button class:active={view === 'list'} title="列表视图" aria-label="列表视图" aria-pressed={view === 'list'} onclick={() => setView('list')}><List size={17} /></button></div>
               <button class="icon-button compact inspector-toggle" class:active={preferences.inspector} title="信息面板" aria-label="信息面板" aria-pressed={preferences.inspector} onclick={() => preferences.inspector = !preferences.inspector}><PanelRight size={17} /></button>
               <div class="options-container"><button class="icon-button compact" title="更多显示选项" aria-label="更多显示选项" aria-expanded={optionsOpen} onclick={(event) => { event.stopPropagation(); optionsOpen = !optionsOpen; context = null; }}><MoreHorizontal size={19} /></button>
-                {#if optionsOpen}<div class="dropdown-menu" role="menu"><button role="menuitemcheckbox" aria-checked={preferences.hidden} onclick={() => preferences.hidden = !preferences.hidden}>{#if preferences.hidden}<Eye size={16} />{:else}<EyeOff size={16} />{/if}<span>显示隐藏文件</span>{#if preferences.hidden}<Check size={14} />{/if}</button><button role="menuitem" onclick={() => copyPath('directory')}><Link2 size={16} /><span>复制当前路径</span></button><button role="menuitem" onclick={refresh} disabled={busy}><RotateCw size={16} /><span>刷新文件夹</span><kbd>F5</kbd></button></div>{/if}
+                {#if optionsOpen}<div class="dropdown-menu" role="menu"><button role="menuitemcheckbox" aria-checked={preferences.hidden} onclick={() => preferences.hidden = !preferences.hidden}>{#if preferences.hidden}<Eye size={16} />{:else}<EyeOff size={16} />{/if}<span>显示隐藏文件</span>{#if preferences.hidden}<Check size={14} />{/if}</button><button role="menuitem" onclick={() => copyPath('directory')}><Link2 size={16} /><span>复制当前路径</span></button><button role="menuitem" onclick={refresh} disabled={busy}><RotateCw size={16} /><span>刷新文件夹</span><kbd>{formatShortcut(shortcuts.refresh)}</kbd></button></div>{/if}
               </div>
             </div>
           </div>
@@ -1258,7 +1277,7 @@
           {/each}
         </section>
       {/if}
-      <footer class="status-bar"><span>{#if operating}<LoaderCircle size={12} class="spin" />正在处理文件…{:else if loading}<LoaderCircle size={12} class="spin" />正在读取…{:else if searching}<LoaderCircle size={12} class="spin" />正在搜索，已扫描 {scanned} 个项目…{:else}<span class="status-dot"></span>一切就绪{/if}{#if metadataRequest && directory?.path === metadataRequest.path}<span class="skipped-label">正在读取文件信息…</span>{/if}{#if directory?.skipped}<span class="skipped-label">已跳过 {directory.skipped} 个无法读取的项目</span>{/if}</span><span>{#if !desktop}浏览器演示 · 示例数据仅保存在本次会话{:else}{info?.platform === 'macos' ? 'macOS' : info?.platform === 'windows' ? 'Windows' : 'Linux'} · 本地文件系统{/if}<span class="status-divider"></span><kbd>{shortcutModifier} L</kbd> 输入路径</span></footer>
+      <footer class="status-bar"><span>{#if operating}<LoaderCircle size={12} class="spin" />正在处理文件…{:else if loading}<LoaderCircle size={12} class="spin" />正在读取…{:else if searching}<LoaderCircle size={12} class="spin" />正在搜索，已扫描 {scanned} 个项目…{:else}<span class="status-dot"></span>一切就绪{/if}{#if metadataRequest && directory?.path === metadataRequest.path}<span class="skipped-label">正在读取文件信息…</span>{/if}{#if directory?.skipped}<span class="skipped-label">已跳过 {directory.skipped} 个无法读取的项目</span>{/if}</span><span>{#if !desktop}浏览器演示 · 示例数据仅保存在本次会话{:else}{info?.platform === 'macos' ? 'macOS' : info?.platform === 'windows' ? 'Windows' : 'Linux'} · 本地文件系统{/if}<span class="status-divider"></span><kbd>{formatShortcut(shortcuts.address)}</kbd> 输入路径</span></footer>
     </main>
   </div>
 
@@ -1297,8 +1316,8 @@
         <button role="menuitem" onclick={() => void runSugar('custom')}><ExternalLink size={16} /><span>使用 Sugar 自定义压缩…</span></button>
       </div>{/if}
     {/if}
-    {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{shortcutModifier} C</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{shortcutModifier} X</kbd></button><button role="menuitem" onclick={() => copyPath('selection')}><Link2 size={16} /><span>{selected.size > 1 ? '复制项目地址' : focused?.isDir ? '复制文件夹地址' : '复制文件地址'}</span></button>{/if}
-    <button role="menuitem" onclick={paste} disabled={busy || (!desktop && !clipboard)}><ClipboardPaste size={16} /><span>粘贴</span><kbd>{shortcutModifier} V</kbd></button>
+    {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{formatShortcut(shortcuts.copy)}</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{formatShortcut(shortcuts.cut)}</kbd></button><button role="menuitem" onclick={() => copyPath('selection')}><Link2 size={16} /><span>{selected.size > 1 ? '复制项目地址' : focused?.isDir ? '复制文件夹地址' : '复制文件地址'}</span></button>{/if}
+    <button role="menuitem" onclick={paste} disabled={busy || (!desktop && !clipboard)}><ClipboardPaste size={16} /><span>粘贴</span><kbd>{formatShortcut(shortcuts.paste)}</kbd></button>
     <div class="menu-divider"></div>
     <button role="menuitem" onclick={() => openDialog('create-file')}><FilePlus size={16} /><span>新建文件</span></button>
     <button role="menuitem" onclick={() => openDialog('create')}><FolderPlus size={16} /><span>新建文件夹</span></button>
@@ -1328,13 +1347,14 @@
       <div class="modal-actions"><button type="button" class="button" onclick={() => smbDialog.close()} disabled={smbConnecting}>取消</button><button class="button primary" type="submit" disabled={smbConnecting}>{#if smbConnecting}<LoaderCircle size={16} class="spin" />{/if}连接</button></div>
     </form>
   </dialog>
-  <dialog class="modal settings-modal" bind:this={settingsDialog} aria-labelledby="settings-title" onclose={() => settingsOpen = false}>
+  <dialog class="modal settings-modal" bind:this={settingsDialog} aria-labelledby="settings-title" onclose={() => { settingsOpen = false; recordingShortcut = null; shortcutError = ''; }}>
     <div class="modal-top"><span class="modal-icon"><Settings size={24} /></span><button class="icon-button" title="关闭设置" aria-label="关闭设置" onclick={() => settingsDialog.close()}><X size={18} /></button></div>
     <h2 id="settings-title">设置</h2><p>按栏目调整偏好，修改会自动保存。</p>
     <nav class="settings-nav" aria-label="设置栏目">
-      <button type="button" class:active={settingsCategory === 'appearance'} aria-pressed={settingsCategory === 'appearance'} onclick={() => settingsCategory = 'appearance'}><Sun size={16} />外观与背景</button>
-      <button type="button" class:active={settingsCategory === 'files'} aria-pressed={settingsCategory === 'files'} onclick={() => settingsCategory = 'files'}><LayoutGrid size={16} />文件显示</button>
-      <button type="button" class:active={settingsCategory === 'terminal'} aria-pressed={settingsCategory === 'terminal'} onclick={() => settingsCategory = 'terminal'}><Terminal size={16} />终端</button>
+      <button type="button" class:active={settingsCategory === 'appearance'} aria-pressed={settingsCategory === 'appearance'} onclick={() => { settingsCategory = 'appearance'; recordingShortcut = null; shortcutError = ''; }}><Sun size={16} />外观与背景</button>
+      <button type="button" class:active={settingsCategory === 'files'} aria-pressed={settingsCategory === 'files'} onclick={() => { settingsCategory = 'files'; recordingShortcut = null; shortcutError = ''; }}><LayoutGrid size={16} />文件显示</button>
+      <button type="button" class:active={settingsCategory === 'shortcuts'} aria-pressed={settingsCategory === 'shortcuts'} onclick={() => { settingsCategory = 'shortcuts'; recordingShortcut = null; }}><Keyboard size={16} />快捷键</button>
+      <button type="button" class:active={settingsCategory === 'terminal'} aria-pressed={settingsCategory === 'terminal'} onclick={() => { settingsCategory = 'terminal'; recordingShortcut = null; shortcutError = ''; }}><Terminal size={16} />终端</button>
     </nav>
     <div class="settings-list">
       <section hidden={settingsCategory !== 'appearance'} aria-labelledby="settings-appearance">
@@ -1365,6 +1385,16 @@
       <label class="settings-row"><span><strong>显示信息面板</strong><small>显示所选项目的详细信息</small></span><input type="checkbox" bind:checked={preferences.inspector} /></label>
       <label class="settings-row"><span><strong>图标大小</strong><small>调整图标视图中的项目大小</small></span><input type="range" min="104" max="168" step="1" bind:value={preferences.size} /></label>
       </section>
+      <section hidden={settingsCategory !== 'shortcuts'} aria-labelledby="settings-shortcuts">
+      <h3 class="settings-section" id="settings-shortcuts">快捷键</h3>
+      <p>点击快捷键后按下新的组合键，按 Esc 取消。</p>
+      {#if shortcutError}<p class="background-error" role="alert">{shortcutError}</p>{/if}
+      {#each Object.keys(shortcutDefaults) as item}
+        {@const action = item as ShortcutAction}
+        <div class="settings-row"><span><strong>{shortcutDefaults[action][0]}</strong></span><button type="button" class="button shortcut-button" aria-label={`设置${shortcutDefaults[action][0]}快捷键`} onclick={() => { recordingShortcut = action; shortcutError = ''; }}>{recordingShortcut === action ? '请按快捷键…' : formatShortcut(shortcuts[action])}</button></div>
+      {/each}
+      <div class="settings-row"><span><strong>恢复默认快捷键</strong></span><button type="button" class="button" onclick={() => { shortcuts = defaultShortcuts(); saveShortcuts(); recordingShortcut = null; shortcutError = ''; }}>恢复默认</button></div>
+      </section>
       <section hidden={settingsCategory !== 'terminal'} aria-labelledby="settings-terminal">
       <h3 class="settings-section" id="settings-terminal">终端</h3>
       <label class="settings-row"><span><strong>默认终端</strong><small>选择打开文件夹时使用的终端</small></span><select aria-label="默认终端" bind:value={preferences.terminal}><option value="system">系统终端</option>{#if info?.platform === 'macos'}<option value="terminal">终端</option><option value="iterm">iTerm</option><option value="warp">Warp</option>{:else if info?.platform === 'windows'}<option value="windows-terminal">Windows Terminal</option><option value="powershell">PowerShell</option><option value="cmd">命令提示符</option>{:else if info?.platform === 'linux'}<option value="gnome-terminal">GNOME Terminal</option><option value="konsole">Konsole</option><option value="xfce4-terminal">Xfce Terminal</option><option value="xterm">XTerm</option>{/if}<option value="custom" disabled={!preferences.customTerminal}>自选应用{preferences.customTerminal ? `：${basename(preferences.customTerminal)}` : ''}</option></select></label>
@@ -1373,5 +1403,5 @@
     </div>
     <div class="modal-actions"><button class="button" onclick={() => settingsDialog.close()}>完成</button></div>
   </dialog>
-  <dialog class="modal help-modal" bind:this={helpDialog}><div class="modal-top"><span class="modal-icon"><Keyboard size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => helpDialog.close()}><X size={18} /></button></div><h2>键盘快捷键</h2><p>Pudding 0.1 · Tauri + Svelte</p><dl class="shortcut-list">{#each [[`${shortcutModifier} T / W`, '新建 / 关闭标签页'], [`${shortcutModifier} L`, '输入文件夹路径'], [`${shortcutModifier} F`, '搜索文件名或内容'], ['Alt ↑ / ← / →', '上一级 / 后退 / 前进'], ['鼠标侧键', '后退 / 前进'], [`${shortcutModifier} Shift N`, '新建文件夹'], [`${shortcutModifier} A`, '选择所有项目'], [`${shortcutModifier} C / X / V`, '复制 / 剪切 / 粘贴'], ['Space', '预览或查看信息 / 关闭'], ['F2', '重命名'], ['Delete / Shift Delete', '移入回收站 / 永久删除'], ['F5', '刷新'], [`${shortcutModifier} Shift .`, '显示或隐藏隐藏文件']] as [keys, label]}<div><dt>{label}</dt><dd><kbd>{keys}</kbd></dd></div>{/each}</dl>{#if !desktop}<p class="help-demo">当前为浏览器演示。使用 <code>npm run tauri dev</code> 启动桌面版，管理真实文件。</p>{/if}</dialog>
+  <dialog class="modal help-modal" bind:this={helpDialog}><div class="modal-top"><span class="modal-icon"><Keyboard size={24} /></span><button class="icon-button" title="关闭" aria-label="关闭" onclick={() => helpDialog.close()}><X size={18} /></button></div><h2>键盘快捷键</h2><p>Pudding 0.1 · Tauri + Svelte</p><dl class="shortcut-list">{#each Object.keys(shortcutDefaults) as item}{@const action = item as ShortcutAction}<div><dt>{shortcutDefaults[action][0]}</dt><dd><kbd>{formatShortcut(shortcuts[action])}</kbd></dd></div>{/each}</dl>{#if !desktop}<p class="help-demo">当前为浏览器演示。使用 <code>npm run tauri dev</code> 启动桌面版，管理真实文件。</p>{/if}</dialog>
 </div>
