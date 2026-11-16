@@ -1302,8 +1302,6 @@
 
   {#if context}{#key context}<div class="context-menu" role="menu" use:fitMenu={context}>
     {#if focused && isImage(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览图片</span><kbd>Space</kbd></button><button role="menuitem" onclick={() => { context = null; void openExternal(focused!); }}><ExternalLink size={16} /><span>使用默认应用打开</span></button>{/if}
-    {#if selectedEntries.length && selectedEntries.every((entry) => !entry.isDir)}<button role="menuitem" onclick={() => void shareSelection()}><Share2 size={16} /><span>{info?.platform === 'linux' && desktop ? '通过邮件分享…' : '分享…'}</span></button>{/if}
-    {#if focused}<button role="menuitem" onclick={() => { infoEntry = focused; context = null; }}><Info size={16} /><span>详细信息</span></button>{/if}
     {#if focused && !isImage(focused) && canPreview(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览</span><kbd>Space</kbd></button>{/if}
     {#if focused && !isImage(focused)}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>打开</span><kbd>Enter</kbd></button>{/if}
     {#if selectedEntries.length > 1 && selectedEntries.some((entry) => !entry.isDir)}<button role="menuitem" onclick={openSelection}><ExternalLink size={16} /><span>打开选中的文件</span><kbd>Enter</kbd></button>{/if}
@@ -1317,8 +1315,16 @@
         <button role="menuitem" onclick={() => void openSystemFileManager(focused?.isDir ? focused.path : directory!.path)}><Folder size={16} /><span>在系统文件管理器中打开</span></button>
       </div>{/if}
     {/if}
+    {#if focused || (selectedEntries.length > 1 && selectedEntries.some((entry) => !entry.isDir)) || (directory && selected.size === 0)}<div class="menu-divider"></div>{/if}
+    {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{formatShortcut(shortcuts.copy)}</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{formatShortcut(shortcuts.cut)}</kbd></button><button role="menuitem" onclick={() => copyPath('selection')}><Link2 size={16} /><span>{selected.size > 1 ? '复制项目地址' : focused?.isDir ? '复制文件夹地址' : '复制文件地址'}</span></button>{/if}
+    <button role="menuitem" onclick={paste} disabled={busy || (!desktop && !clipboard)}><ClipboardPaste size={16} /><span>粘贴</span><kbd>{formatShortcut(shortcuts.paste)}</kbd></button>
+    {#if selected.size === 1}<button role="menuitem" onclick={() => openDialog('rename')}><Pencil size={16} /><span>重命名</span><kbd>F2</kbd></button>{/if}
+    {#if focused || selected.size === 0 || (selectedEntries.length > 0 && selectedEntries.every((entry) => !entry.isDir)) || (sugarAvailable && (selected.size || directory))}
+    <div class="menu-divider"></div>
+    {#if selectedEntries.length && selectedEntries.every((entry) => !entry.isDir)}<button role="menuitem" onclick={() => void shareSelection()}><Share2 size={16} /><span>{info?.platform === 'linux' && desktop ? '通过邮件分享…' : '分享…'}</span></button>{/if}
+    {#if focused}<button role="menuitem" onclick={() => { infoEntry = focused; context = null; }}><Info size={16} /><span>详细信息</span></button>{/if}
+    {#if !selected.size}<button role="menuitem" onclick={() => copyPath('directory')}><Link2 size={16} /><span>复制当前文件夹地址</span></button>{/if}
     {#if sugarAvailable && (selected.size || directory)}
-      <div class="menu-divider"></div>
       <button role="menuitem" aria-haspopup="menu" aria-expanded={sugarMenuOpen} onclick={(event) => { event.stopPropagation(); sugarMenuOpen = !sugarMenuOpen; openElsewhereMenuOpen = false; }} onmouseenter={() => { sugarMenuOpen = true; openElsewhereMenuOpen = false; }}><FileText size={16} /><span>解压缩</span><ChevronRight size={14} /></button>
       {#if sugarMenuOpen}<div class="context-submenu archive-submenu" role="menu" aria-label="解压缩">
         {#if archiveSelected}<button role="menuitem" onclick={() => void runSugar('extract')}><Folder size={16} /><span>解压到当前文件夹</span></button><button role="menuitem" onclick={() => void runSugar('extract-folder')}><FolderPlus size={16} /><span>解压到同名文件夹</span></button>{/if}
@@ -1326,13 +1332,10 @@
         <button role="menuitem" onclick={() => void runSugar('custom')}><ExternalLink size={16} /><span>使用 Sugar 自定义压缩…</span></button>
       </div>{/if}
     {/if}
-    {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{formatShortcut(shortcuts.copy)}</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{formatShortcut(shortcuts.cut)}</kbd></button><button role="menuitem" onclick={() => copyPath('selection')}><Link2 size={16} /><span>{selected.size > 1 ? '复制项目地址' : focused?.isDir ? '复制文件夹地址' : '复制文件地址'}</span></button>{/if}
-    <button role="menuitem" onclick={paste} disabled={busy || (!desktop && !clipboard)}><ClipboardPaste size={16} /><span>粘贴</span><kbd>{formatShortcut(shortcuts.paste)}</kbd></button>
+    {/if}
     <div class="menu-divider"></div>
     <button role="menuitem" onclick={() => openDialog('create-file')}><FilePlus size={16} /><span>新建文件</span></button>
     <button role="menuitem" onclick={() => openDialog('create')}><FolderPlus size={16} /><span>新建文件夹</span></button>
-    {#if selected.size === 1}<button role="menuitem" onclick={() => openDialog('rename')}><Pencil size={16} /><span>重命名</span><kbd>F2</kbd></button>{/if}
-    {#if !selected.size}<button role="menuitem" onclick={() => copyPath('directory')}><Link2 size={16} /><span>复制当前文件夹地址</span></button>{/if}
     {#if selected.size}<div class="menu-divider"></div><button role="menuitem" class="danger-text" onclick={(event) => confirmTrash(shiftHeld || event.shiftKey)}><Trash2 size={16} /><span>{shiftHeld ? '永久删除' : '移入回收站'}</span><kbd>{shiftHeld ? 'Shift Del' : 'Del'}</kbd></button>{/if}
   </div>{/key}{/if}
 

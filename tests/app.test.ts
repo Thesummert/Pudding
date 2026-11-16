@@ -532,6 +532,19 @@ describe('file manager interactions', () => {
     expect([...host.querySelectorAll('[role="menuitem"] span')].some((span) => span.textContent === '分享…')).toBe(false);
   });
 
+  it('groups context menu actions by purpose', async () => {
+    await contextMenu('开始使用.md');
+    const menu = host.querySelector('.context-menu')!;
+    const items = [...menu.querySelectorAll(':scope > button')].map((item) => item.querySelector('span')?.textContent);
+    expect(items.indexOf('预览')).toBeLessThan(items.indexOf('复制'));
+    expect(items.indexOf('重命名')).toBeLessThan(items.indexOf('分享…'));
+    expect(items.indexOf('详细信息')).toBeLessThan(items.indexOf('新建文件'));
+    expect(items.at(-1)).toBe('移入回收站');
+    const children = [...menu.children];
+    expect(children[0].classList.contains('menu-divider')).toBe(false);
+    expect(children.some((child, index) => child.classList.contains('menu-divider') && children[index + 1]?.classList.contains('menu-divider'))).toBe(false);
+  });
+
   it('opens a text preview from the context menu', async () => {
     await contextMenu('开始使用.md');
     await click(menuItem('预览'));
