@@ -470,6 +470,53 @@ pub fn rename_entry(path: &str, name: &str) -> Result<String> {
     Ok(display(&destination))
 }
 
+#[cfg(target_os = "linux")]
+fn is_gvfs_smb_path(path: &Path, gvfs_root: &Path) -> bool {
+    path.strip_prefix(gvfs_root)
+        .ok()
+        .and_then(|relative| relative.components().next())
+        .is_some_and(|component| {
+            component
+                .as_os_str()
+                .to_string_lossy()
+                .starts_with("smb-share:")
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn is_cifs_mount(path: &Path) -> bool {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: path is NUL-terminated and statfs initializes stat on success.
+    if unsafe { libc::statfs(path.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return false;
+    }
+    let fs_type = unsafe { stat.assume_init() }.f_type as u64;
+    // Linux CIFS_MAGIC_NUMBER and SMB2_MAGIC_NUMBER.
+    fs_type == 0xff53_4d42 || fs_type == 0xfe53_4d42
+}
+
+fn preserve_copy_permissions(destination: &Path) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        if is_cifs_mount(destination) {
+            return false;
+        }
+        if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+            let root = PathBuf::from(runtime).join("gvfs");
+            let root = fs::canonicalize(&root).unwrap_or(root);
+            if is_gvfs_smb_path(destination, &root) {
+                return false;
+            }
+        }
+    }
+    let _ = destination;
+    true
+}
+
 fn copy_entry(source: &Path, destination: &Path, progress: &mut dyn FnMut(u64)) -> Result<()> {
     let metadata = fs::symlink_metadata(source).map_err(|e| io_error("无法读取", source, e))?;
     if metadata.is_symlink() {
@@ -516,11 +563,13 @@ fn copy_entry(source: &Path, destination: &Path, progress: &mut dyn FnMut(u64)) 
             let _ = fs::remove_file(destination);
             return Err(io_error("无法复制", source, error));
         }
-        // Preserve executable bits and read-only attributes where supported.
-        if let Err(error) = fs::set_permissions(destination, metadata.permissions()) {
-            drop(output);
-            let _ = fs::remove_file(destination);
-            return Err(io_error("无法设置权限", destination, error));
+        // SMB mounts do not reliably support chmod; use the server's permissions there.
+        if preserve_copy_permissions(destination) {
+            if let Err(error) = fs::set_permissions(destination, metadata.permissions()) {
+                drop(output);
+                let _ = fs::remove_file(destination);
+                return Err(io_error("无法设置权限", destination, error));
+            }
         }
         Ok(())
     } else {
@@ -1220,6 +1269,49 @@ mod tests {
         );
         assert!(source.join("nested/file.txt").exists());
         assert!(transfer_entries(paths, &display(&target), "copy").is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn recognizes_only_smb_mounts_under_the_gvfs_root() {
+        let root = Path::new("/run/user/1000/gvfs");
+        assert!(is_gvfs_smb_path(
+            Path::new("/run/user/1000/gvfs/smb-share:server=host,share=files/folder/file"),
+            root
+        ));
+        assert!(!is_gvfs_smb_path(
+            Path::new("/run/user/1000/gvfs/sftp:host=host/file"),
+            root
+        ));
+        assert!(!is_gvfs_smb_path(
+            Path::new("/run/user/1000/gvfs-other/smb-share:server=host/file"),
+            root
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires PUDDING_TEST_SMB_DIRECTORY to point to a readable CIFS/SMB mount"]
+    fn recognizes_cifs_mount() {
+        let destination = PathBuf::from(std::env::var_os("PUDDING_TEST_SMB_DIRECTORY").unwrap());
+        assert!(is_cifs_mount(&destination));
+        assert!(!preserve_copy_permissions(&destination));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires PUDDING_TEST_SMB_DIRECTORY to point to a writable SMB directory"]
+    fn copies_file_to_smb() {
+        let destination = PathBuf::from(std::env::var_os("PUDDING_TEST_SMB_DIRECTORY").unwrap());
+        assert!(!preserve_copy_permissions(&destination));
+        let source = tempfile::tempdir().unwrap();
+        let name = format!("pudding-upload-test-{}", std::process::id());
+        let input = source.path().join(&name);
+        let output = destination.join(&name);
+        fs::write(&input, b"SMB upload test").unwrap();
+        copy_entry(&input, &output, &mut |_| {}).unwrap();
+        assert_eq!(fs::read(&output).unwrap(), b"SMB upload test");
+        fs::remove_file(output).unwrap();
     }
 
     #[test]
