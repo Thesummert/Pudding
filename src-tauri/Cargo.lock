@@ -3176,6 +3176,8 @@ dependencies = [
  "tempfile",
  "trash",
  "url",
+ "windows 0.62.2",
+ "windows-collections",
  "windows-sys 0.61.2",
 ]
 

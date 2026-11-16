@@ -512,6 +512,26 @@ describe('file manager interactions', () => {
     expect(host.querySelector('.info-preview-modal')).toBeNull();
   });
 
+  it('shares selected files and reports failures', async () => {
+    const share = vi.spyOn(api, 'shareFiles').mockResolvedValueOnce().mockRejectedValue(new Error('分享不可用'));
+    await contextMenu('开始使用.md');
+    await click(menuItem('分享…'));
+    expect(share).toHaveBeenCalledWith(['/home/pudding/开始使用.md']);
+    expect(host.querySelector('.context-menu')).toBeNull();
+    await click(button('开始使用.md'));
+    button('灵感笔记.txt').dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    await tick();
+    await contextMenu('灵感笔记.txt');
+    await click(menuItem('分享…'));
+    expect(share).toHaveBeenLastCalledWith(['/home/pudding/开始使用.md', '/home/pudding/灵感笔记.txt']);
+    await vi.waitFor(() => expect(host.textContent).toContain('分享不可用'));
+    await contextMenu('开始使用.md');
+    await click(menuItem('分享…'));
+    await vi.waitFor(() => expect(host.textContent).toContain('分享不可用'));
+    await contextMenu('Documents');
+    expect([...host.querySelectorAll('[role="menuitem"] span')].some((span) => span.textContent === '分享…')).toBe(false);
+  });
+
   it('opens a text preview from the context menu', async () => {
     await contextMenu('开始使用.md');
     await click(menuItem('预览'));

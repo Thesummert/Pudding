@@ -6,6 +6,7 @@ mod open_with;
 mod rename;
 mod search;
 mod session;
+mod share;
 mod smb;
 mod sugar;
 mod terminal;
@@ -343,6 +344,22 @@ async fn open_entry(app: tauri::AppHandle, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn share_files(window: tauri::WebviewWindow, paths: Vec<String>) -> Result<(), String> {
+    let paths = blocking(move || share::checked_files(paths)).await?;
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    let target = window.clone();
+    window
+        .run_on_main_thread(move || {
+            let _ = sender.try_send(share::show(&target, paths));
+        })
+        .map_err(|e| e.to_string())?;
+    receiver
+        .recv()
+        .await
+        .ok_or("系统分享任务已结束".to_string())?
+}
+
+#[tauri::command]
 async fn open_system_file_manager(path: String) -> Result<(), String> {
     blocking(move || file_manager::open(&path)).await
 }
@@ -503,6 +520,7 @@ pub fn run() {
             delete_entries,
             open_entry,
             open_system_file_manager,
+            share_files,
             open_entry_with,
             list_open_apps,
             sugar_available,

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, FilePlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert, Eject, Settings, Network, Terminal, Clock } from '@lucide/svelte';
+  import { Plus, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Home, Monitor, FileText, Download, Image, Music2, Film, HardDrive, Folder, FolderPlus, FilePlus, Search, X, RotateCw, LayoutGrid, List, PanelRight, MoreHorizontal, Eye, EyeOff, Copy, Scissors, ClipboardPaste, Pencil, Trash2, ExternalLink, Check, Info, LoaderCircle, Keyboard, Sun, Moon, Link2, ChevronsUpDown, CircleAlert, Eject, Settings, Network, Terminal, Clock, Share2 } from '@lucide/svelte';
   import FileIcon from './lib/FileIcon.svelte';
   import FolderPreview from './lib/FolderPreview.svelte';
   import FileThumbnail from './lib/FileThumbnail.svelte';
@@ -678,6 +678,13 @@
     catch (error) { notify(errorMessage(error), true); }
   }
 
+  async function shareSelection() {
+    const paths = selectedEntries.map((entry) => entry.path);
+    context = null;
+    try { await api.shareFiles(paths); }
+    catch (error) { notify(errorMessage(error), true); }
+  }
+
   async function openSystemFileManager(path: string) {
     context = null;
     try { await api.openSystemFileManager(path); }
@@ -1295,6 +1302,7 @@
 
   {#if context}{#key context}<div class="context-menu" role="menu" use:fitMenu={context}>
     {#if focused && isImage(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览图片</span><kbd>Space</kbd></button><button role="menuitem" onclick={() => { context = null; void openExternal(focused!); }}><ExternalLink size={16} /><span>使用默认应用打开</span></button>{/if}
+    {#if selectedEntries.length && selectedEntries.every((entry) => !entry.isDir)}<button role="menuitem" onclick={() => void shareSelection()}><Share2 size={16} /><span>{info?.platform === 'linux' && desktop ? '通过邮件分享…' : '分享…'}</span></button>{/if}
     {#if focused}<button role="menuitem" onclick={() => { infoEntry = focused; context = null; }}><Info size={16} /><span>详细信息</span></button>{/if}
     {#if focused && !isImage(focused) && canPreview(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览</span><kbd>Space</kbd></button>{/if}
     {#if focused && !isImage(focused)}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>打开</span><kbd>Enter</kbd></button>{/if}
