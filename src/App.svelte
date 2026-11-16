@@ -1030,6 +1030,19 @@
     if (event.button === 3) back(); else forward();
   }
 
+  function focusEntry(index: number) {
+    anchor = entries[index].path;
+    selected = new Set([anchor]);
+    if (entries.length > 300 && viewport.height > 0) {
+      const top = windowed.top + Math.floor(index / windowed.columns) * windowed.rowStep;
+      const bottom = top + windowed.rowStep;
+      if (top < fileArea.scrollTop + (view === 'list' ? 37 : 0)) fileArea.scrollTop = Math.max(0, top - (view === 'list' ? 37 : 0));
+      else if (bottom > fileArea.scrollTop + fileArea.clientHeight) fileArea.scrollTop = bottom - fileArea.clientHeight;
+      viewport.scrollTop = fileArea.scrollTop;
+    }
+    void tick().then(() => fileArea.querySelector<HTMLButtonElement>(`[data-index="${index}"]`)?.focus());
+  }
+
   function keydown(event: KeyboardEvent) {
     dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey };
     shiftHeld = event.shiftKey;
@@ -1083,16 +1096,18 @@
       const offset = key === 'arrowleft' ? -1 : key === 'arrowright' ? 1 : key === 'arrowup' ? -columns : columns;
       const index = entries.findIndex((e) => e.path === anchor);
       const next = index < 0 ? 0 : Math.min(entries.length - 1, Math.max(0, index + offset));
-      anchor = entries[next].path;
-      selected = new Set([anchor]);
-      if (entries.length > 300 && viewport.height > 0) {
-        const top = windowed.top + Math.floor(next / columns) * windowed.rowStep;
-        const bottom = top + windowed.rowStep;
-        if (top < fileArea.scrollTop + (view === 'list' ? 37 : 0)) fileArea.scrollTop = Math.max(0, top - (view === 'list' ? 37 : 0));
-        else if (bottom > fileArea.scrollTop + fileArea.clientHeight) fileArea.scrollTop = bottom - fileArea.clientHeight;
-        viewport.scrollTop = fileArea.scrollTop;
+      focusEntry(next);
+    }
+    else if (!event.isComposing && !event.ctrlKey && !event.metaKey && !event.altKey && key !== ' ' && Array.from(event.key).length === 1 && entries.length && (target.closest('.file-area') || target === document.body)) {
+      const current = selected.size === 1 ? entries.findIndex((entry) => selected.has(entry.path)) : -1;
+      for (let offset = 1; offset <= entries.length; offset++) {
+        const next = (current + offset) % entries.length;
+        if (entries[next].name.toLocaleLowerCase().startsWith(key)) {
+          event.preventDefault();
+          focusEntry(next);
+          break;
+        }
       }
-      void tick().then(() => fileArea.querySelector<HTMLButtonElement>(`[data-index="${next}"]`)?.focus());
     }
   }
 </script>

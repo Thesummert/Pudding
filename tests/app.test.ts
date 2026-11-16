@@ -76,6 +76,25 @@ afterEach(async () => {
 });
 
 describe('file manager interactions', () => {
+  it.each(['grid', 'list'])('cycles through names by their first character in %s view', async (view) => {
+    if (view === 'list') await click(button('列表视图'));
+    const matching = [...host.querySelectorAll<HTMLButtonElement>('.file-card, .file-row')]
+      .filter((entry) => entry.getAttribute('aria-label')?.toLowerCase().startsWith('d'));
+    expect(matching.length).toBeGreaterThan(1);
+    for (const expected of [...matching, matching[0]]) {
+      document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'D', shiftKey: true, bubbles: true, cancelable: true }));
+      await tick();
+      await tick();
+      expect(expected.getAttribute('aria-pressed')).toBe('true');
+      expect(document.activeElement).toBe(expected);
+    }
+    const search = host.querySelector<HTMLInputElement>('input[aria-label="搜索当前文件夹"]');
+    expect(search).not.toBeNull();
+    search!.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true }));
+    await tick();
+    expect(matching[0].getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('pins selected and current folders, restores them, navigates and removes them', async () => {
     await click(button('Documents'));
     await click(button('固定当前或选中的文件夹'));
