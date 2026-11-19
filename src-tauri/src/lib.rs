@@ -10,6 +10,7 @@ mod share;
 mod smb;
 mod sugar;
 mod terminal;
+mod video_preview;
 mod volumes;
 
 use tauri::{Emitter, Manager};
@@ -250,15 +251,6 @@ async fn read_entry_details(
     names: Vec<String>,
 ) -> Result<Vec<filesystem::FileEntry>, String> {
     blocking(move || filesystem::read_entry_details(&directory, names)).await
-}
-
-#[tauri::command]
-async fn prepare_video_preview(app: tauri::AppHandle, path: String) -> Result<String, String> {
-    let path = blocking(move || filesystem::video_preview_path(&path)).await?;
-    app.asset_protocol_scope()
-        .allow_file(&path)
-        .map_err(|e| format!("无法预览视频：{e}"))?;
-    Ok(path)
 }
 
 #[tauri::command]
@@ -528,7 +520,9 @@ pub fn run() {
             directory_size,
             read_image,
             read_preview_file,
-            prepare_video_preview,
+            video_preview::prepare_video_preview,
+            video_preview::start_video_conversion,
+            video_preview::video_conversion_source,
             create_folder,
             create_file,
             rename_entry,

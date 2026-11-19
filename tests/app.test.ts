@@ -637,6 +637,51 @@ describe('file manager interactions', () => {
     expect(host.querySelector('.file-preview-modal')).toBeNull();
   });
 
+  it('plays the compatible video after a native decoding error and releases it on close', async () => {
+    vi.spyOn(api, 'videoSource').mockResolvedValue('blob:original-video');
+    vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockReturnValue('probably');
+    const convert = vi.spyOn(api, 'compatibleVideoSource').mockResolvedValue('blob:compatible-video');
+    await doubleClick('Videos');
+    await vi.waitFor(() => expect(button('示例视频.mp4')).toBeTruthy());
+    const file = button('示例视频.mp4');
+    await click(file);
+    file.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }));
+    const player = () => host.querySelector<HTMLVideoElement>('.video-preview');
+    await vi.waitFor(() => expect(player()?.getAttribute('src')).toBe('blob:original-video'));
+    player()!.dispatchEvent(new Event('error'));
+    await vi.waitFor(() => expect(player()?.getAttribute('src')).toBe('blob:compatible-video'));
+    expect(convert).toHaveBeenCalledOnce();
+    const [path, format, signal] = convert.mock.calls[0];
+    expect(path).toMatch(/\/示例视频\.mp4$/);
+    expect(format).toBe('mp4');
+    expect(signal.aborted).toBe(false);
+    await click(button('关闭预览'));
+    expect(signal.aborted).toBe(true);
+  });
+
+  it('cancels video conversion on close and ignores its late result', async () => {
+    vi.spyOn(api, 'videoSource').mockResolvedValue('blob:original-video');
+    vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockReturnValue('');
+    let finish!: (url: string) => void;
+    const convert = vi.spyOn(api, 'compatibleVideoSource').mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    await doubleClick('Videos');
+    await vi.waitFor(() => expect(button('示例视频.mp4')).toBeTruthy());
+    const file = button('示例视频.mp4');
+    await click(file);
+    file.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }));
+    const player = () => host.querySelector<HTMLVideoElement>('.video-preview');
+    await vi.waitFor(() => expect(player()).not.toBeNull());
+    player()!.dispatchEvent(new Event('error'));
+    await vi.waitFor(() => expect(host.querySelector('.file-preview-message')?.textContent).toContain('正在转换视频'));
+    const [, format, signal] = convert.mock.calls[0];
+    expect(format).toBe('webm');
+    await click(button('关闭预览'));
+    expect(signal.aborted).toBe(true);
+    finish('blob:late-video');
+    await tick();
+    expect(player()).toBeNull();
+  });
+
   it('closes image preview with Space', async () => {
     await doubleClick('Pictures');
     await vi.waitFor(() => expect(button('海岸.svg')).toBeTruthy());

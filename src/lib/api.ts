@@ -1,5 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
-import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke, isTauri, Resource } from '@tauri-apps/api/core';
 import type { AppInfo, Clipboard, DirectoryListing, FileEntry, Volume, MountableVolume } from './types';
 import { getCurrentWebview, type DragDropEvent } from '@tauri-apps/api/webview';
 import { imageMimeType } from './files';
@@ -95,6 +95,36 @@ export const api = {
   videoSource: async (path: string): Promise<string> => {
     if (!desktop) return call<string>('video_source', { path });
     return convertFileSrc(await invoke<string>('prepare_video_preview', { path }));
+  },
+  compatibleVideoSource: async (path: string, format: 'mp4' | 'webm', signal: AbortSignal): Promise<string | null> => {
+    if (!desktop) return null;
+    signal.throwIfAborted();
+    const resource = new Resource(await invoke<number>('start_video_conversion', { path, format }));
+    const release = () => { void resource.close().catch(() => {}); };
+    if (signal.aborted) {
+      release();
+      signal.throwIfAborted();
+    }
+    let ready = false;
+    signal.addEventListener('abort', release, { once: true });
+    try {
+      while (true) {
+        signal.throwIfAborted();
+        const output = await invoke<string | null>('video_conversion_source', { rid: resource.rid });
+        signal.throwIfAborted();
+        if (output) {
+          const source = convertFileSrc(output);
+          ready = true;
+          return source;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    } finally {
+      if (!ready && !signal.aborted) {
+        signal.removeEventListener('abort', release);
+        release();
+      }
+    }
   },
   image: async (path: string, extension: string): Promise<string> => {
     const bytes = await call<ArrayBuffer | number[]>('read_image', { path });

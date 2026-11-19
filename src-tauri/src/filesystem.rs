@@ -874,7 +874,7 @@ pub fn video_preview_path(path: &str) -> Result<String> {
         extension.as_str(),
         "mp4" | "m4v" | "mov" | "mkv" | "avi" | "webm" | "mpeg" | "mpg" | "ogv"
     ) {
-        return Err("此文件格式不支持视频封面".into());
+        return Err("此文件格式不支持视频预览".into());
     }
     let metadata = fs::metadata(&path).map_err(|e| io_error("无法读取视频", &path, e))?;
     if !metadata.is_file() {
