@@ -47,6 +47,7 @@ export function formatDate(value: number | null): string {
 }
 
 export function fileKind(entry: FileEntry): string {
+  if (entry.isApp) return entry.isSymlink ? '应用程序链接' : '应用程序';
   if (entry.isSymlink) return entry.isDir ? '文件夹链接' : '符号链接';
   if (entry.isDir) return '文件夹';
   const ext = entry.extension.toLowerCase();

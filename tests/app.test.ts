@@ -76,6 +76,33 @@ afterEach(async () => {
 });
 
 describe('file manager interactions', () => {
+  it('launches a macOS application and can explicitly browse its package', async () => {
+    const listing = await api.read('/home/pudding');
+    const appEntry = { ...listing.entries.find((entry) => entry.isDir)!, name: '测试 应用.app', path: '/home/pudding/测试 应用.app', extension: 'app', isApp: true };
+    const readDirectory = vi.spyOn(api, 'read').mockImplementation(async (path) => path === appEntry.path
+      ? { path, parent: listing.path, entries: [], skipped: 0 }
+      : { ...listing, entries: [...listing.entries, appEntry] });
+    const open = vi.spyOn(api, 'open').mockResolvedValue();
+    await unmount(app);
+    app = mount(App, { target: host });
+    await vi.waitFor(() => expect(button(appEntry.name)).toBeTruthy());
+    expect(button(appEntry.name).querySelector('.file-caption')?.textContent).toBe('应用程序');
+
+    await doubleClick(appEntry.name);
+    await vi.waitFor(() => expect(open).toHaveBeenLastCalledWith(appEntry.path));
+    await click(button(appEntry.name));
+    button(appEntry.name).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(2));
+    await contextMenu(appEntry.name);
+    await click(menuItem('运行应用'));
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(3));
+    expect(readDirectory).not.toHaveBeenCalledWith(appEntry.path);
+
+    await contextMenu(appEntry.name);
+    await click(menuItem('显示包内容'));
+    await vi.waitFor(() => expect(readDirectory).toHaveBeenCalledWith(appEntry.path));
+  });
+
   it.each(['grid', 'list'])('cycles through names by their first character in %s view', async (view) => {
     if (view === 'list') await click(button('列表视图'));
     const matching = [...host.querySelectorAll<HTMLButtonElement>('.file-card, .file-row')]

@@ -292,6 +292,9 @@
   let renderedEntries = $derived(entries.slice(windowed.start, windowed.end));
   let selectedEntries = $derived(entries.filter((entry) => selected.has(entry.path)));
   let focused = $derived(selectedEntries.length === 1 ? selectedEntries[0] : undefined);
+  let hasSelectedApp = $derived(selectedEntries.some((entry) => entry.isApp));
+  let hasOpenableSelection = $derived(hasSelectedApp || selectedEntries.some((entry) => !entry.isDir));
+  let openSelectionLabel = $derived(hasSelectedApp ? '打开选中的项目' : '打开选中的文件');
   let pinPath = $derived(selected.size === 0 ? directory?.path : focused?.isDir ? focused.path : undefined);
   let archiveSelected = $derived(focused && !focused.isDir && /\.(?:zip|7z|tar|tar\.gz|tar\.bz2|tar\.xz|tgz|tbz2?|txz)$/i.test(focused.name));
   let currentPlace = $derived(info?.places.find((place) => place.path === directory?.path));
@@ -639,7 +642,7 @@
 
   async function openEntry(entry: FileEntry) {
     if (busy) return;
-    if (entry.isDir) await navigate(entry.path);
+    if (entry.isDir && !entry.isApp) await navigate(entry.path);
     else if (isImage(entry)) previewImage(entry);
     else await openExternal(entry);
   }
@@ -652,8 +655,9 @@
   async function openSelection() {
     if (busy) return;
     if (selectedEntries.length === 1) { await openEntry(selectedEntries[0]); return; }
+    if (!hasOpenableSelection) return;
     const entriesToOpen = [...selectedEntries];
-    if (!entriesToOpen.some((entry) => !entry.isDir)) return;
+    const itemLabel = hasSelectedApp ? '项目' : '文件';
     context = null;
     operating = true;
     try {
@@ -661,8 +665,8 @@
       const skippedText = skipped ? `，跳过 ${skipped} 个文件夹` : '';
       if (failures.length) {
         const names = failures.slice(0, 3).map((failure) => failure.name).join('、');
-        notify(`已打开 ${attempted - failures.length} 个文件，${failures.length} 个打开失败（${names}${failures.length > 3 ? '等' : ''}）：${errorMessage(failures[0].error)}${skippedText}`, true);
-      } else notify(`已打开 ${attempted} 个文件${skippedText}`);
+        notify(`已打开 ${attempted - failures.length} 个${itemLabel}，${failures.length} 个打开失败（${names}${failures.length > 3 ? '等' : ''}）：${errorMessage(failures[0].error)}${skippedText}`, true);
+      } else notify(`已打开 ${attempted} 个${itemLabel}${skippedText}`);
     } finally { operating = false; }
   }
 
@@ -1243,10 +1247,10 @@
                 {#if windowed.before}<div class="virtual-grid-spacer" style={`height: ${windowed.before}px`} aria-hidden="true"></div>{/if}
                 {#each renderedEntries as entry, localIndex (entry.path)}
                   {@const index = windowed.start + localIndex}
-                  <button class="file-card" draggable={!desktop && !busy} onpointerdown={(event) => beginDrag(event, entry)} ondragstart={(event) => demoDragStart(event, entry)} data-drop-path={entry.isDir ? entry.path : undefined} class:drop-target={dropRegion === 'browser' && dropTarget === entry.path} class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} title={`${entry.name}\n${entry.isDir ? '文件夹' : formatEntrySize(entry)}\n双击打开`} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
+                  <button class="file-card" draggable={!desktop && !busy} onpointerdown={(event) => beginDrag(event, entry)} ondragstart={(event) => demoDragStart(event, entry)} data-drop-path={entry.isDir && !entry.isApp ? entry.path : undefined} class:drop-target={dropRegion === 'browser' && dropTarget === entry.path} class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} title={`${entry.name}\n${entry.isDir ? fileKind(entry) : formatEntrySize(entry)}\n${entry.isApp ? '双击运行' : '双击打开'}`} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
                     {#if selected.has(entry.path)}<span class="selected-check"><Check size={10} strokeWidth={3} /></span>{/if}
-                    <span class="file-visual">{#if entry.isDir}<FolderPreview {entry} hidden={preferences.hidden} refreshToken={directory} />{:else if !entry.metadataPending && (isImage(entry) || isVideo(entry))}<FileThumbnail {entry} large />{:else}<FileIcon {entry} large />{/if}</span>
-                    <span class="file-name">{entry.name}</span><span class="file-caption">{entry.isDir ? folderLabels[entry.name] ?? '文件夹' : formatEntrySize(entry)}</span>
+                    <span class="file-visual">{#if entry.isDir && !entry.isApp}<FolderPreview {entry} hidden={preferences.hidden} refreshToken={directory} />{:else if !entry.metadataPending && (isImage(entry) || isVideo(entry))}<FileThumbnail {entry} large />{:else}<FileIcon {entry} large />{/if}</span>
+                    <span class="file-name">{entry.name}</span><span class="file-caption">{entry.isApp ? fileKind(entry) : entry.isDir ? folderLabels[entry.name] ?? '文件夹' : formatEntrySize(entry)}</span>
                   </button>
                 {/each}
                 {#if windowed.after}<div class="virtual-grid-spacer" style={`height: ${windowed.after}px`} aria-hidden="true"></div>{/if}
@@ -1257,7 +1261,7 @@
                 {#if windowed.before}<div style={`height: ${windowed.before}px`} aria-hidden="true"></div>{/if}
                 {#each renderedEntries as entry, localIndex (entry.path)}
                   {@const index = windowed.start + localIndex}
-                  <button class="file-row" draggable={!desktop && !busy} onpointerdown={(event) => beginDrag(event, entry)} ondragstart={(event) => demoDragStart(event, entry)} data-drop-path={entry.isDir ? entry.path : undefined} class:drop-target={dropRegion === 'browser' && dropTarget === entry.path} class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
+                  <button class="file-row" draggable={!desktop && !busy} onpointerdown={(event) => beginDrag(event, entry)} ondragstart={(event) => demoDragStart(event, entry)} data-drop-path={entry.isDir && !entry.isApp ? entry.path : undefined} class:drop-target={dropRegion === 'browser' && dropTarget === entry.path} class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
                     <span class="row-name">{#if !entry.metadataPending && (isImage(entry) || isVideo(entry))}<FileThumbnail {entry} />{:else}<FileIcon {entry} />{/if}<span>{entry.name}</span></span><span class="row-date">{formatDate(entry.modified)}</span><span class="row-type">{fileKind(entry)}</span><span class="row-size">{entry.isDir ? '—' : formatEntrySize(entry)}</span>
                   </button>
                 {/each}
@@ -1280,7 +1284,7 @@
             <div class="inspector-name"><h2>{selected.size > 1 ? `${selected.size} 个项目` : focused?.name ?? title}</h2><span class="type-badge">{selected.size > 1 ? '多项选择' : focused ? fileKind(focused) : '当前文件夹'}</span></div>
             <div class="inspector-divider"></div>
             <dl class="properties"><div><dt>位置</dt><dd class="path-value" title={focused?.path ?? directory?.path}>{selected.size > 1 ? directory?.path : focused?.path ?? directory?.path ?? '—'}</dd></div>{#if focused}<div><dt>类型</dt><dd>{fileKind(focused)}</dd></div>{#if !focused.isDir}<div><dt>大小</dt><dd>{formatEntrySize(focused)}</dd></div>{/if}<div><dt>修改时间</dt><dd>{formatDate(focused.modified)}</dd></div><MediaDetails entry={focused} />{:else if selected.size > 1}<div><dt>已选项目</dt><dd>{selected.size} 项</dd></div><div><dt>文件大小</dt><dd>{formatSize(selectedSize)}</dd></div>{:else}<div><dt>内容</dt><dd>{directory?.entries.filter((e) => preferences.hidden || !e.hidden).length ?? 0} 个项目</dd></div><div><dt>文件夹</dt><dd>{directory?.entries.filter((e) => e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div><div><dt>文件</dt><dd>{directory?.entries.filter((e) => !e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div>{/if}</dl>
-            {#if focused}<button class="button inspector-open" onclick={() => focused!.isDir ? openEntry(focused!) : openExternal(focused!)} disabled={busy}><ExternalLink size={15} />{focused.isDir ? '打开文件夹' : '使用默认应用打开'}<ArrowRight size={14} /></button>{:else if selectedEntries.some((entry) => !entry.isDir)}<button class="button inspector-open" onclick={openSelection} disabled={busy}><ExternalLink size={15} />打开选中的文件<ArrowRight size={14} /></button>{/if}
+            {#if focused}<button class="button inspector-open" onclick={() => focused!.isDir ? openEntry(focused!) : openExternal(focused!)} disabled={busy}><ExternalLink size={15} />{focused.isApp ? '运行应用' : focused.isDir ? '打开文件夹' : '使用默认应用打开'}<ArrowRight size={14} /></button>{:else if hasOpenableSelection}<button class="button inspector-open" onclick={openSelection} disabled={busy}><ExternalLink size={15} />{openSelectionLabel}<ArrowRight size={14} /></button>{/if}
             <div class="inspector-tip"><span class="tip-label"><Info size={14} />小提示</span><p>{selected.size ? `按住 ${shortcutModifier} 点选多个项目，按 Shift 连续选择，或拖动空白处框选。` : '单击查看文件信息，双击打开。也可以在地址栏中输入路径。'}</p></div>
           </aside>
         {/if}
@@ -1318,8 +1322,9 @@
   {#if context}{#key context}<div class="context-menu" role="menu" use:fitMenu={context}>
     {#if focused && isImage(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览图片</span><kbd>Space</kbd></button><button role="menuitem" onclick={() => { context = null; void openExternal(focused!); }}><ExternalLink size={16} /><span>使用默认应用打开</span></button>{/if}
     {#if focused && !isImage(focused) && canPreview(focused)}<button role="menuitem" onclick={() => previewImage(focused!)}><Eye size={16} /><span>预览</span><kbd>Space</kbd></button>{/if}
-    {#if focused && !isImage(focused)}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>打开</span><kbd>Enter</kbd></button>{/if}
-    {#if selectedEntries.length > 1 && selectedEntries.some((entry) => !entry.isDir)}<button role="menuitem" onclick={openSelection}><ExternalLink size={16} /><span>打开选中的文件</span><kbd>Enter</kbd></button>{/if}
+    {#if focused && !isImage(focused)}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>{focused.isApp ? '运行应用' : '打开'}</span><kbd>Enter</kbd></button>{/if}
+    {#if focused?.isApp}<button role="menuitem" onclick={() => { context = null; if (focused) void navigate(focused.path); }}><Folder size={16} /><span>显示包内容</span></button>{/if}
+    {#if selectedEntries.length > 1 && hasOpenableSelection}<button role="menuitem" onclick={openSelection}><ExternalLink size={16} /><span>{openSelectionLabel}</span><kbd>Enter</kbd></button>{/if}
     {#if desktop && focused && !focused.isDir}<button role="menuitem" onclick={() => void openWith(focused!)}><ExternalLink size={16} /><span>选择其他应用打开…</span></button>{/if}
     {#if directory && (focused?.isDir || selected.size === 0)}
       <button role="menuitem" aria-haspopup="menu" aria-expanded={openElsewhereMenuOpen} onclick={(event) => { event.stopPropagation(); openElsewhereMenuOpen = !openElsewhereMenuOpen; sugarMenuOpen = false; }} onmouseenter={() => { openElsewhereMenuOpen = true; sugarMenuOpen = false; }} onkeydown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openElsewhereMenuOpen = true; sugarMenuOpen = false; void tick().then(() => document.querySelector<HTMLButtonElement>('.open-elsewhere-submenu button')?.focus()); } }}><ExternalLink size={16} /><span>在其他地方打开</span><ChevronRight size={14} /></button>
@@ -1330,7 +1335,7 @@
         <button role="menuitem" onclick={() => void openSystemFileManager(focused?.isDir ? focused.path : directory!.path)}><Folder size={16} /><span>在系统文件管理器中打开</span></button>
       </div>{/if}
     {/if}
-    {#if focused || (selectedEntries.length > 1 && selectedEntries.some((entry) => !entry.isDir)) || (directory && selected.size === 0)}<div class="menu-divider"></div>{/if}
+    {#if focused || (selectedEntries.length > 1 && hasOpenableSelection) || (directory && selected.size === 0)}<div class="menu-divider"></div>{/if}
     {#if selected.size}<button role="menuitem" onclick={() => copySelection('copy')}><Copy size={16} /><span>复制</span><kbd>{formatShortcut(shortcuts.copy)}</kbd></button><button role="menuitem" onclick={() => copySelection('cut')}><Scissors size={16} /><span>剪切</span><kbd>{formatShortcut(shortcuts.cut)}</kbd></button><button role="menuitem" onclick={() => copyPath('selection')}><Link2 size={16} /><span>{selected.size > 1 ? '复制项目地址' : focused?.isDir ? '复制文件夹地址' : '复制文件地址'}</span></button>{/if}
     <button role="menuitem" onclick={paste} disabled={busy || (!desktop && !clipboard)}><ClipboardPaste size={16} /><span>粘贴</span><kbd>{formatShortcut(shortcuts.paste)}</kbd></button>
     {#if selected.size === 1}<button role="menuitem" onclick={() => openDialog('rename')}><Pencil size={16} /><span>重命名</span><kbd>F2</kbd></button>{/if}

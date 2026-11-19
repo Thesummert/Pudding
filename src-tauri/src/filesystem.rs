@@ -14,6 +14,7 @@ pub struct FileEntry {
     pub(crate) name: String,
     pub(crate) path: String,
     pub(crate) is_dir: bool,
+    pub(crate) is_app: bool,
     pub(crate) is_symlink: bool,
     pub(crate) size: u64,
     pub(crate) modified: Option<u64>,
@@ -264,6 +265,14 @@ fn read_directory_impl(path: &str, allow_lazy: bool) -> Result<DirectoryListing>
     })
 }
 
+pub(crate) fn is_application_bundle(path: &Path) -> bool {
+    cfg!(target_os = "macos")
+        && path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("app"))
+        && path.join("Contents/Info.plist").is_file()
+}
+
 fn directory_entry(entry: &fs::DirEntry) -> Option<FileEntry> {
     let path = entry.path();
     // DirEntry::metadata can reuse the directory enumeration's attributes on
@@ -288,6 +297,7 @@ fn directory_entry(entry: &fs::DirEntry) -> Option<FileEntry> {
         name,
         path: display(&path),
         is_dir: metadata.is_dir(),
+        is_app: metadata.is_dir() && is_application_bundle(&path),
         is_symlink,
         size: if metadata.is_dir() { 0 } else { metadata.len() },
         modified: metadata
@@ -315,6 +325,7 @@ fn directory_entry_basic(entry: &fs::DirEntry) -> Option<FileEntry> {
         name,
         path: display(&path),
         is_dir: kind.is_dir(),
+        is_app: kind.is_dir() && is_application_bundle(&path),
         is_symlink: false,
         size: 0,
         modified: None,
@@ -361,6 +372,7 @@ pub fn read_entry_details(directory: &str, names: Vec<String>) -> Result<Vec<Fil
                                 name,
                                 path: display(path),
                                 is_dir: effective.is_dir(),
+                                is_app: effective.is_dir() && is_application_bundle(path),
                                 is_symlink: metadata.is_symlink(),
                                 size: if effective.is_dir() {
                                     0
@@ -948,6 +960,36 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn identifies_application_bundles_in_directory_entries() {
+        let dir = tempdir().unwrap();
+        let app = dir.path().join("测试 应用.APP");
+        fs::create_dir_all(app.join("Contents")).unwrap();
+        fs::write(app.join("Contents/Info.plist"), b"").unwrap();
+        let folder = dir.path().join("ordinary.app");
+        fs::create_dir(&folder).unwrap();
+        fs::write(dir.path().join("file.app"), b"").unwrap();
+
+        let path = display(dir.path());
+        let listing = read_directory(&path).unwrap();
+        let names = listing
+            .entries
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect();
+        let details = read_entry_details(&path, names).unwrap();
+        let basic = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| directory_entry_basic(&entry.unwrap()))
+            .collect::<Vec<_>>();
+        for entries in [listing.entries, details, basic] {
+            let applications: Vec<_> = entries.iter().filter(|entry| entry.is_app).collect();
+            assert_eq!(applications.len(), 1);
+            assert_eq!(applications[0].name, "测试 应用.APP");
+            assert!(applications[0].is_dir);
+        }
+    }
     #[test]
     fn permanently_deletes_files_and_directories_after_validating_all_paths() {
         let dir = tempdir().unwrap();

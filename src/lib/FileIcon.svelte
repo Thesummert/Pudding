@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { FileText, FileCode2, FileArchive, File, Image, Music2, Film, Link2, Download, Monitor, Headphones, Camera, Code2 } from '@lucide/svelte';
+  import { AppWindow, FileText, FileCode2, FileArchive, File, Image, Music2, Film, Link2, Download, Monitor, Headphones, Camera, Code2 } from '@lucide/svelte';
   import { fileKind } from './files';
   import type { FileEntry } from './types';
 
@@ -7,11 +7,12 @@
   const folderSymbols: Record<string, typeof Download> = { Downloads: Download, Desktop: Monitor, Documents: FileText, Pictures: Camera, Music: Headphones, Videos: Film, Projects: Code2 };
   let kind = $derived(fileKind(entry));
   let FolderSymbol = $derived(folderSymbols[entry.name]);
-  let Icon = $derived(kind === '图像' ? Image : kind === '音频' ? Music2 : kind === '视频' ? Film : kind === '压缩文件' ? FileArchive : kind === '代码文件' ? FileCode2 : kind.includes('文档') ? FileText : File);
+  let Icon = $derived(entry.isApp ? AppWindow : kind === '图像' ? Image : kind === '音频' ? Music2 : kind === '视频' ? Film : kind === '压缩文件' ? FileArchive : kind === '代码文件' ? FileCode2 : kind.includes('文档') ? FileText : File);
+  let folder = $derived(entry.isDir && !entry.isApp);
 </script>
 
-<span class:large class:folder={entry.isDir} class="file-icon" data-kind={kind} aria-hidden="true">
-  {#if entry.isDir}
+<span class:large class:folder class="file-icon" data-kind={kind} aria-hidden="true">
+  {#if folder}
     <svg class="folder-shape" viewBox="0 0 72 60" fill="none">
       <path d="M5 13a5 5 0 0 1 5-5h17l7 7h28a5 5 0 0 1 5 5v28a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5V13Z" fill="var(--folder-back)" />
       <path d="M5 23a5 5 0 0 1 5-5h52a5 5 0 0 1 5 5v25a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5V23Z" fill="var(--folder-front)" />

@@ -337,10 +337,28 @@ async fn delete_entries(paths: Vec<String>) -> Result<(), String> {
 
 #[tauri::command]
 async fn open_entry(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    let path = blocking(move || filesystem::openable_path(&path)).await?;
-    app.opener()
-        .open_path(path, None::<&str>)
-        .map_err(|e| format!("无法用默认应用打开：{e}"))
+    blocking(move || {
+        let path = filesystem::openable_path(&path)?;
+        #[cfg(target_os = "macos")]
+        if filesystem::is_application_bundle(std::path::Path::new(&path)) {
+            let output = std::process::Command::new("/usr/bin/open")
+                .arg("-a")
+                .arg(&path)
+                .output()
+                .map_err(|error| format!("无法启动应用：{error}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "无法启动应用：{}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+            return Ok(());
+        }
+        app.opener()
+            .open_path(path, None::<&str>)
+            .map_err(|e| format!("无法用默认应用打开：{e}"))
+    })
+    .await
 }
 
 #[tauri::command]
