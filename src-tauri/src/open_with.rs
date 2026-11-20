@@ -8,11 +8,11 @@ pub struct Application {
 }
 
 fn checked_file(path: &str) -> Result<String, String> {
-    let path = crate::filesystem::openable_path(path)?;
-    if !Path::new(&path).is_file() {
+    let path = crate::filesystem::resolved_source(path)?;
+    if !path.is_file() {
         return Err("请选择文件".into());
     }
-    Ok(path)
+    Ok(crate::filesystem::display(&path))
 }
 
 #[cfg(target_os = "linux")]

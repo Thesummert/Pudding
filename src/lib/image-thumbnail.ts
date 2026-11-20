@@ -21,8 +21,8 @@ function remember(key: string, blob: Blob) {
   }
 }
 
-export async function loadImageThumbnail(path: string, extension: string, modified: number | null, size: number, active: () => boolean): Promise<string | null> {
-  const key = JSON.stringify([path, extension, modified, size]);
+export async function loadImageThumbnail(path: string, extension: string, modified: number | null, size: number, active: () => boolean, linkTarget?: string): Promise<string | null> {
+  const key = JSON.stringify([path, extension, modified, size, linkTarget]);
   const cached = cache.get(key);
   if (cached) {
     cache.delete(key);

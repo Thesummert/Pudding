@@ -11,6 +11,7 @@
   let imageExtension = $derived(entry.extension);
   let imageModified = $derived(entry.modified);
   let imageSize = $derived(entry.size);
+  let imageTarget = $derived(entry.linkTarget);
   let source = $state('');
   let loaded = $state(false);
   let error = $state('');
@@ -80,7 +81,7 @@
   }
 
   $effect(() => {
-    const path = imagePath, extension = imageExtension, modified = imageModified, size = imageSize;
+    const path = imagePath, extension = imageExtension, modified = imageModified, size = imageSize, linkTarget = imageTarget;
     // Include metadata so refreshing an externally modified image reloads it.
     void modified;
     void size;
@@ -89,7 +90,7 @@
     source = '';
     loaded = false;
     error = '';
-    const load = () => thumbnail ? loadImageThumbnail(path, extension, modified, size, () => active) : api.image(path, extension);
+    const load = () => thumbnail ? loadImageThumbnail(path, extension, modified, size, () => active, linkTarget) : api.image(path, extension);
     void (thumbnail ? queueThumbnail(load, () => active) : load()).then((result) => {
       if (!result) return;
       if (!active) { URL.revokeObjectURL(result); return; }

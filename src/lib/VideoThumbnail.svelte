@@ -5,6 +5,10 @@
   import type { FileEntry } from './types';
 
   let { entry, large = false }: { entry: FileEntry; large?: boolean } = $props();
+  let videoPath = $derived(entry.path);
+  let videoModified = $derived(entry.modified);
+  let videoSize = $derived(entry.size);
+  let linkTarget = $derived(entry.linkTarget);
   let source = $state('');
   let loaded = $state(false);
   let failed = $state(false);
@@ -16,13 +20,14 @@
   }
 
   $effect(() => {
-    const { path, modified, size } = entry;
+    const path = videoPath;
+    const version = `${videoModified ?? ''}-${videoSize}-${linkTarget ?? ''}`;
     let active = true;
     source = '';
     loaded = false;
     failed = false;
     void api.videoSource(path).then((url) => {
-      if (active) source = url.startsWith('data:') ? url : `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(`${modified ?? ''}-${size}`)}`;
+      if (active) source = url.startsWith('data:') ? url : `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(version)}`;
     }).catch(() => { if (active) failed = true; });
     return () => { active = false; };
   });

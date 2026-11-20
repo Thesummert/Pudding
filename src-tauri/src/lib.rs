@@ -330,7 +330,7 @@ async fn delete_entries(paths: Vec<String>) -> Result<(), String> {
 #[tauri::command]
 async fn open_entry(app: tauri::AppHandle, path: String) -> Result<(), String> {
     blocking(move || {
-        let path = filesystem::openable_path(&path)?;
+        let path = filesystem::display(&filesystem::resolved_source(&path)?);
         #[cfg(target_os = "macos")]
         if filesystem::is_application_bundle(std::path::Path::new(&path)) {
             let output = std::process::Command::new("/usr/bin/open")

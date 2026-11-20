@@ -4,11 +4,20 @@
   import type { FileEntry } from './types';
 
   let { entry }: { entry: FileEntry } = $props();
+  let mediaKind = $derived(isImage(entry) ? 'image' : isVideo(entry) ? 'video' : null);
+  let mediaPath = $derived(entry.path);
+  let mediaExtension = $derived(entry.extension);
+  let mediaSize = $derived(entry.size);
+  let mediaModified = $derived(entry.modified);
+  let linkTarget = $derived(entry.linkTarget);
   let details = $state<{ width: number; height: number; duration?: number } | null>(null);
   let failed = $state(false);
 
   $effect(() => {
-    const file = entry;
+    const kind = mediaKind, path = mediaPath, extension = mediaExtension;
+    void mediaSize;
+    void mediaModified;
+    void linkTarget;
     let active = true;
     let source: string | undefined;
     let media: HTMLVideoElement | undefined;
@@ -17,16 +26,16 @@
     failed = false;
     const load = async () => {
       try {
-        if (isImage(file)) {
-          const url = await api.image(file.path, file.extension);
+        if (kind === 'image') {
+          const url = await api.image(path, extension);
           if (!active) { URL.revokeObjectURL(url); return; }
           source = url;
           image = new Image();
           image.onload = () => { if (active) details = { width: image!.naturalWidth, height: image!.naturalHeight }; };
           image.onerror = () => { if (active) failed = true; };
           image.src = url;
-        } else if (isVideo(file)) {
-          const url = await api.videoSource(file.path);
+        } else if (kind === 'video') {
+          const url = await api.videoSource(path);
           if (!active) return;
           media = document.createElement('video');
           media.preload = 'metadata';

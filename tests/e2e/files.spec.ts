@@ -144,7 +144,7 @@ test('opens multiple selected files from the context menu and keyboard', async (
   const first = page.getByRole('button', { name: '开始使用.md', exact: true });
   const second = page.getByRole('button', { name: '灵感笔记.txt', exact: true });
   await first.click();
-  await second.click({ modifiers: ['Control'] });
+  await second.click({ modifiers: ['ControlOrMeta'] });
   await second.click({ button: 'right' });
   await page.getByRole('menuitem', { name: '打开选中的文件' }).click();
   await expect(page.getByRole('alert')).toContainText('2 个打开失败');

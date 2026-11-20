@@ -1,5 +1,5 @@
 use crate::filesystem::{self, FileEntry};
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
     collections::HashMap,
     fs,
@@ -7,7 +7,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tauri::{Emitter, WebviewWindow};
+use tauri::{Emitter, EventTarget, WebviewWindow};
 
 #[derive(Default)]
 pub struct SearchState {
@@ -24,14 +24,21 @@ pub fn watch(state: &SearchState, window: WebviewWindow, path: String) -> Result
     let root = filesystem::resolve_directory(&path)?;
     let cache = state.cache.clone();
     let label = window.label().to_string();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if event.is_ok_and(|event| !matches!(event.kind, notify::EventKind::Access(_))) {
-            if let Ok(mut cache) = cache.lock() {
-                cache.clear();
+    let mut watcher = RecommendedWatcher::new(
+        move |event: notify::Result<notify::Event>| {
+            if event.is_ok_and(|event| !matches!(event.kind, notify::EventKind::Access(_))) {
+                if let Ok(mut cache) = cache.lock() {
+                    cache.clear();
+                }
+                let _ = window.emit_to(
+                    EventTarget::webview(window.label()),
+                    "filesystem-changed",
+                    (),
+                );
             }
-            let _ = window.emit("filesystem-changed", ());
-        }
-    })
+        },
+        Config::default().with_follow_symlinks(false),
+    )
     .map_err(|e| e.to_string())?;
     watcher
         .watch(&root, RecursiveMode::Recursive)

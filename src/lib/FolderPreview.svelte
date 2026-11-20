@@ -5,12 +5,14 @@
   import FileThumbnail from './FileThumbnail.svelte';
   import { isImage } from './files';
   import { queueThumbnail } from './thumbnail-queue';
-  import type { DirectoryListing, FileEntry } from './types';
+  import type { FileEntry } from './types';
 
-  let { entry, hidden, refreshToken }: { entry: FileEntry; hidden: boolean; refreshToken: DirectoryListing | undefined } = $props();
+  let { entry, hidden, version }: { entry: FileEntry; hidden: boolean; version: number } = $props();
+  let folderPath = $derived(entry.path);
   let container: HTMLSpanElement;
   let visible = $state(false);
   let children = $state<FileEntry[]>([]);
+  let shown = $derived(children.filter((child) => hidden || !child.hidden));
 
   onMount(() => {
     if (typeof IntersectionObserver === 'undefined') { visible = true; return; }
@@ -22,11 +24,9 @@
   });
 
   $effect(() => {
-    const path = entry.path;
+    const path = folderPath;
     const showHidden = hidden;
-    // A new listing also invalidates previews after filesystem changes or refresh.
-    void refreshToken;
-    children = [];
+    void version;
     if (!visible) return;
     let active = true;
     void queueThumbnail(() => api.folderPreview(path, showHidden), () => active)
@@ -38,9 +38,9 @@
 
 <span class="folder-preview" bind:this={container} aria-hidden="true">
   <FileIcon {entry} large />
-  {#if children.length}
+  {#if shown.length}
     <span class="folder-preview-items">
-      {#each children as child (child.path)}
+      {#each shown as child (child.path)}
         <span class="folder-preview-item">
           {#if isImage(child)}<FileThumbnail entry={child} />{:else}<FileIcon entry={child} />{/if}
         </span>

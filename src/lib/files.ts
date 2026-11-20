@@ -9,22 +9,22 @@ export function imageMimeType(extension: string): string | undefined {
 }
 
 export function isImage(entry: FileEntry): boolean {
-  return !entry.isDir && imageMimeType(entry.extension) !== undefined;
+  return !entry.isDir && !entry.linkUnavailable && imageMimeType(entry.extension) !== undefined;
 }
 
 export function isVideo(entry: FileEntry): boolean {
-  return !entry.isDir && ['mp4', 'm4v', 'mov', 'mkv', 'avi', 'webm', 'mpeg', 'mpg', 'ogv'].includes(entry.extension.toLowerCase());
+  return !entry.isDir && !entry.linkUnavailable && ['mp4', 'm4v', 'mov', 'mkv', 'avi', 'webm', 'mpeg', 'mpg', 'ogv'].includes(entry.extension.toLowerCase());
 }
 
 const textExtensions = new Set(['txt', 'md', 'markdown', 'csv', 'tsv', 'log', 'json', 'jsonl', 'xml', 'yaml', 'yml', 'toml', 'ini', 'conf', 'cfg', 'html', 'htm', 'css', 'scss', 'js', 'jsx', 'ts', 'tsx', 'svelte', 'vue', 'rs', 'py', 'sh', 'bash', 'zsh', 'c', 'h', 'cpp', 'hpp', 'java', 'go', 'swift', 'sql', 'rb', 'php', 'properties']);
 const textNames = new Set(['readme', 'license', 'licence', 'makefile', 'dockerfile', '.gitignore', '.gitattributes', '.editorconfig', '.env', '.bashrc', '.zshrc']);
 
 export function isText(entry: FileEntry): boolean {
-  return !entry.isDir && (textExtensions.has(entry.extension.toLowerCase()) || textNames.has(entry.name.toLowerCase()));
+  return !entry.isDir && !entry.linkUnavailable && (textExtensions.has(entry.extension.toLowerCase()) || textNames.has(basename(entry.linkTarget ?? entry.name).toLowerCase()));
 }
 
 export function isPdf(entry: FileEntry): boolean {
-  return !entry.isDir && entry.extension.toLowerCase() === 'pdf';
+  return !entry.isDir && !entry.linkUnavailable && entry.extension.toLowerCase() === 'pdf';
 }
 
 export function canPreview(entry: FileEntry): boolean {
@@ -38,7 +38,7 @@ export function formatSize(bytes: number): string {
 }
 
 export function formatEntrySize(entry: FileEntry): string {
-  return entry.metadataPending || entry.metadataUnavailable ? '—' : formatSize(entry.size);
+  return entry.metadataPending || entry.metadataUnavailable || entry.linkUnavailable ? '—' : formatSize(entry.size);
 }
 
 export function formatDate(value: number | null): string {
@@ -47,6 +47,7 @@ export function formatDate(value: number | null): string {
 }
 
 export function fileKind(entry: FileEntry): string {
+  if (entry.linkUnavailable) return '目标不可用的链接';
   if (entry.isApp) return entry.isSymlink ? '应用程序链接' : '应用程序';
   if (entry.isSymlink) return entry.isDir ? '文件夹链接' : '符号链接';
   if (entry.isDir) return '文件夹';

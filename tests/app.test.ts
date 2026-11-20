@@ -76,6 +76,76 @@ afterEach(async () => {
 });
 
 describe('file manager interactions', () => {
+  it('keeps menus and the file list interactive during filesystem changes and window events', async () => {
+    let onChange!: () => void;
+    vi.spyOn(api, 'listenChanges').mockImplementation(async (handler) => { onChange = handler; return () => {}; });
+    await unmount(app);
+    app = mount(App, { target: host });
+    await vi.waitFor(() => expect(button('Documents')).toBeTruthy());
+
+    const listing = await api.read('/home/pudding');
+    const originalRead = api.read;
+    let completeRefresh!: (listing: Awaited<ReturnType<typeof api.read>>) => void;
+    const read = vi.spyOn(api, 'read').mockImplementationOnce(() => new Promise((resolve) => { completeRefresh = resolve; }));
+    await contextMenu('Documents');
+    const menu = host.querySelector('.context-menu')!;
+    menuItem('在其他地方打开').dispatchEvent(new MouseEvent('mouseenter'));
+    await tick();
+    onChange();
+    await vi.waitFor(() => expect(read).toHaveBeenCalledWith(listing.path));
+
+    window.dispatchEvent(new Event('blur'));
+    window.dispatchEvent(new Event('resize'));
+    await tick();
+    expect(host.querySelector('.context-menu')).toBe(menu);
+    expect(menuItem('在新标签页中打开')).toBeTruthy();
+    expect(host.querySelector('.file-area')?.getAttribute('aria-busy')).toBe('false');
+    const added = { ...listing.entries[0], name: 'new-file.txt', path: `${listing.path}/new-file.txt`, isDir: false, extension: 'txt' };
+    completeRefresh({ ...listing, entries: [...listing.entries, added] });
+    await vi.waitFor(() => expect(button(added.name)).toBeTruthy());
+    expect(host.querySelector('.context-menu')).toBe(menu);
+    expect(button('Documents').getAttribute('aria-pressed')).toBe('true');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await tick();
+    expect(host.querySelector('.context-menu')).toBeNull();
+    await click(button('更多显示选项'));
+    read.mockImplementationOnce(() => new Promise((resolve) => { completeRefresh = resolve; }));
+    onChange();
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    window.dispatchEvent(new Event('blur'));
+    await tick();
+    expect(host.querySelector('.dropdown-menu')).toBeTruthy();
+    await doubleClick('Documents');
+    await vi.waitFor(() => expect(host.querySelector('h1')?.textContent).toBe('文档.'));
+    completeRefresh(await originalRead(listing.path));
+    await tick();
+    expect(host.querySelector('h1')?.textContent).toBe('文档.');
+    expect(host.querySelector('.dropdown-menu')).toBeNull();
+  });
+
+  it('shows a broken symlink and its target while preserving file operations on the link', async () => {
+    const listing = await api.read('/home/pudding');
+    const path = `${listing.path}/missing.png`;
+    const link = { name: 'missing.png', path, isDir: false, isSymlink: true, linkTarget: 'original.png', linkUnavailable: true, size: 12, modified: null, hidden: false, extension: 'png' };
+    vi.spyOn(api, 'read').mockResolvedValue({ ...listing, entries: [...listing.entries, link] });
+    vi.spyOn(api, 'open').mockRejectedValue(new Error('链接目标不可用'));
+    const copy = vi.spyOn(api, 'writeClipboard').mockResolvedValue();
+    await unmount(app);
+    app = mount(App, { target: host });
+    await vi.waitFor(() => expect(button(link.name).querySelector('.file-caption')?.textContent).toBe('目标不可用的链接'));
+    await contextMenu(link.name);
+    expect(host.querySelector('.context-menu')?.textContent).not.toContain('预览图片');
+    await click(menuItem('详细信息'));
+    expect(host.querySelector('.info-preview-modal')?.textContent).toContain('original.png');
+    await click(button('关闭信息'));
+    await contextMenu(link.name);
+    await click(menuItem('复制'));
+    expect(copy).toHaveBeenCalledWith({ mode: 'copy', paths: [path] });
+    await doubleClick(link.name);
+    await vi.waitFor(() => expect(host.querySelector('.toast')?.textContent).toContain('链接目标不可用'));
+  });
+
   it('launches a macOS application and can explicitly browse its package', async () => {
     const listing = await api.read('/home/pudding');
     const appEntry = { ...listing.entries.find((entry) => entry.isDir)!, name: '测试 应用.app', path: '/home/pudding/测试 应用.app', extension: 'app', isApp: true };

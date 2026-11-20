@@ -4,6 +4,8 @@ export interface FileEntry {
   isDir: boolean;
   isApp?: boolean;
   isSymlink: boolean;
+  linkTarget?: string;
+  linkUnavailable?: boolean;
   size: number;
   modified: number | null;
   hidden: boolean;

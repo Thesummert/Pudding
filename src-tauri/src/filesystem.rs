@@ -16,6 +16,10 @@ pub struct FileEntry {
     pub(crate) is_dir: bool,
     pub(crate) is_app: bool,
     pub(crate) is_symlink: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) link_target: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) link_unavailable: bool,
     pub(crate) size: u64,
     pub(crate) modified: Option<u64>,
     pub(crate) hidden: bool,
@@ -277,28 +281,49 @@ fn directory_entry(entry: &fs::DirEntry) -> Option<FileEntry> {
     let path = entry.path();
     // DirEntry::metadata can reuse the directory enumeration's attributes on
     // Windows and, like symlink_metadata, does not follow symbolic links.
-    let link_metadata = entry.metadata().ok()?;
+    Some(entry_details(
+        &path,
+        entry.file_name().to_string_lossy().into_owned(),
+        &entry.metadata().ok()?,
+    ))
+}
+
+fn extension(path: &Path) -> String {
+    path.extension()
+        .map(|value| value.to_string_lossy().to_lowercase())
+        .unwrap_or_default()
+}
+
+fn entry_details(path: &Path, name: String, link_metadata: &fs::Metadata) -> FileEntry {
     let is_symlink = link_metadata.is_symlink();
-    let target_metadata = if is_symlink {
-        fs::metadata(&path).ok()
-    } else {
-        None
-    };
-    let metadata = target_metadata.as_ref().unwrap_or(&link_metadata);
-    let name = entry.file_name().to_string_lossy().to_string();
+    let mut link_target = None;
+    let mut resolved = None;
+    if is_symlink {
+        link_target = fs::read_link(path).ok().map(|target| display(&target));
+        resolved = fs::canonicalize(path)
+            .and_then(|target| fs::metadata(&target).map(|metadata| (target, metadata)))
+            .ok();
+    }
+    let (effective_path, metadata) = resolved
+        .as_ref()
+        .map_or((path, link_metadata), |(target, metadata)| {
+            (target.as_path(), metadata)
+        });
     let hidden = name.starts_with('.');
     #[cfg(windows)]
     let hidden = {
         use std::os::windows::fs::MetadataExt;
         hidden || link_metadata.file_attributes() & 0x2 != 0
     };
-    Some(FileEntry {
+    FileEntry {
         hidden,
         name,
-        path: display(&path),
+        path: display(path),
         is_dir: metadata.is_dir(),
-        is_app: metadata.is_dir() && is_application_bundle(&path),
+        is_app: metadata.is_dir() && is_application_bundle(effective_path),
         is_symlink,
+        link_target,
+        link_unavailable: is_symlink && resolved.is_none(),
         size: if metadata.is_dir() { 0 } else { metadata.len() },
         modified: metadata
             .modified()
@@ -306,11 +331,8 @@ fn directory_entry(entry: &fs::DirEntry) -> Option<FileEntry> {
             .and_then(|v| v.duration_since(UNIX_EPOCH).ok())
             .map(|v| v.as_secs()),
         metadata_pending: false,
-        extension: path
-            .extension()
-            .map(|s| s.to_string_lossy().to_lowercase())
-            .unwrap_or_default(),
-    })
+        extension: extension(effective_path),
+    }
 }
 
 fn directory_entry_basic(entry: &fs::DirEntry) -> Option<FileEntry> {
@@ -327,13 +349,12 @@ fn directory_entry_basic(entry: &fs::DirEntry) -> Option<FileEntry> {
         is_dir: kind.is_dir(),
         is_app: kind.is_dir() && is_application_bundle(&path),
         is_symlink: false,
+        link_target: None,
+        link_unavailable: false,
         size: 0,
         modified: None,
         metadata_pending: true,
-        extension: path
-            .extension()
-            .map(|s| s.to_string_lossy().to_lowercase())
-            .unwrap_or_default(),
+        extension: extension(&path),
     })
 }
 
@@ -360,36 +381,8 @@ pub fn read_entry_details(directory: &str, names: Vec<String>) -> Result<Vec<Fil
                         .iter()
                         .filter_map(|path| {
                             let metadata = fs::symlink_metadata(path).ok()?;
-                            let target = if metadata.is_symlink() {
-                                fs::metadata(path).ok()
-                            } else {
-                                None
-                            };
-                            let effective = target.as_ref().unwrap_or(&metadata);
                             let name = path.file_name()?.to_string_lossy().into_owned();
-                            Some(FileEntry {
-                                hidden: name.starts_with('.'),
-                                name,
-                                path: display(path),
-                                is_dir: effective.is_dir(),
-                                is_app: effective.is_dir() && is_application_bundle(path),
-                                is_symlink: metadata.is_symlink(),
-                                size: if effective.is_dir() {
-                                    0
-                                } else {
-                                    effective.len()
-                                },
-                                modified: effective
-                                    .modified()
-                                    .ok()
-                                    .and_then(|v| v.duration_since(UNIX_EPOCH).ok())
-                                    .map(|v| v.as_secs()),
-                                metadata_pending: false,
-                                extension: path
-                                    .extension()
-                                    .map(|s| s.to_string_lossy().to_lowercase())
-                                    .unwrap_or_default(),
-                            })
+                            Some(entry_details(path, name, &metadata))
                         })
                         .collect::<Vec<_>>()
                 })
@@ -456,6 +449,10 @@ pub fn create_file(parent: &str, name: &str) -> Result<String> {
 }
 
 fn checked_source(path: &str) -> Result<PathBuf> {
+    checked_source_metadata(path).map(|(path, _)| path)
+}
+
+fn checked_source_metadata(path: &str) -> Result<(PathBuf, fs::Metadata)> {
     let path = PathBuf::from(path);
     if !path.is_absolute() || path.file_name().is_none() {
         return Err("无法操作文件系统根目录或相对路径".into());
@@ -463,8 +460,8 @@ fn checked_source(path: &str) -> Result<PathBuf> {
     // Canonicalize the parent, preserving the entry itself when it is a symlink.
     let parent = path.parent().ok_or("无法操作此路径")?;
     let source = resolve_directory(&display(parent))?.join(path.file_name().unwrap());
-    fs::symlink_metadata(&source).map_err(|e| io_error("无法访问", &source, e))?;
-    Ok(source)
+    let metadata = fs::symlink_metadata(&source).map_err(|e| io_error("无法访问", &source, e))?;
+    Ok((source, metadata))
 }
 
 pub fn rename_entry(path: &str, name: &str) -> Result<String> {
@@ -529,10 +526,29 @@ fn preserve_copy_permissions(destination: &Path) -> bool {
     true
 }
 
+fn copy_symlink(source: &Path, destination: &Path, kind: fs::FileType) -> Result<()> {
+    let target = fs::read_link(source).map_err(|e| io_error("无法读取链接目标", source, e))?;
+    #[cfg(unix)]
+    let result = {
+        let _ = kind;
+        std::os::unix::fs::symlink(target, destination)
+    };
+    #[cfg(windows)]
+    let result = {
+        use std::os::windows::fs::{symlink_dir, symlink_file, FileTypeExt};
+        if kind.is_symlink_dir() {
+            symlink_dir(target, destination)
+        } else {
+            symlink_file(target, destination)
+        }
+    };
+    result.map_err(|e| io_error("无法创建符号链接", destination, e))
+}
+
 fn copy_entry(source: &Path, destination: &Path, progress: &mut dyn FnMut(u64)) -> Result<()> {
     let metadata = fs::symlink_metadata(source).map_err(|e| io_error("无法读取", source, e))?;
     if metadata.is_symlink() {
-        return Err(format!("暂不支持复制符号链接：{}", display(source)));
+        return copy_symlink(source, destination, metadata.file_type());
     }
     if metadata.is_dir() {
         fs::create_dir(destination).map_err(|e| io_error("无法创建", destination, e))?;
@@ -833,22 +849,7 @@ pub fn delete_entries(paths: Vec<String>) -> Result<()> {
         .map(|p| checked_source(p))
         .collect::<Result<_>>()?;
     for (index, path) in checked.iter().enumerate() {
-        let result = (|| {
-            let metadata = fs::symlink_metadata(path)?;
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::FileTypeExt;
-                if metadata.file_type().is_symlink_dir() {
-                    return fs::remove_dir(path);
-                }
-            }
-            if metadata.is_dir() && !metadata.is_symlink() {
-                fs::remove_dir_all(path)
-            } else {
-                fs::remove_file(path)
-            }
-        })();
-        if let Err(error) = result {
+        if let Err(error) = remove_entry(path) {
             return Err(format!(
                 "{}。已永久删除 {index} 个项目，请刷新确认项目状态",
                 io_error("无法永久删除", path, error)
@@ -863,13 +864,18 @@ pub fn openable_path(path: &str) -> Result<String> {
     Ok(display(&path))
 }
 
+pub(crate) fn resolved_source(path: &str) -> Result<PathBuf> {
+    let (path, metadata) = checked_source_metadata(path)?;
+    if metadata.is_symlink() {
+        fs::canonicalize(&path).map_err(|e| io_error("链接目标不可用", &path, e))
+    } else {
+        Ok(path)
+    }
+}
+
 pub fn video_preview_path(path: &str) -> Result<String> {
-    let path = checked_source(path)?;
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let path = resolved_source(path)?;
+    let extension = extension(&path);
     if !matches!(
         extension.as_str(),
         "mp4" | "m4v" | "mov" | "mkv" | "avi" | "webm" | "mpeg" | "mpg" | "ogv"
@@ -885,7 +891,7 @@ pub fn video_preview_path(path: &str) -> Result<String> {
 }
 
 pub fn read_preview_file(path: &str, kind: &str) -> Result<Vec<u8>> {
-    let path = checked_source(path)?;
+    let path = resolved_source(path)?;
     let limit = match kind {
         "text" => 2 * 1024 * 1024,
         "pdf" => {
@@ -924,21 +930,17 @@ pub fn read_preview_file(path: &str, kind: &str) -> Result<Vec<u8>> {
 const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 
 pub fn read_image(path: &str) -> Result<Vec<u8>> {
-    let path = checked_source(path)?;
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let path = resolved_source(path)?;
+    let metadata = fs::metadata(&path).map_err(|e| io_error("无法读取图片", &path, e))?;
+    if !metadata.is_file() {
+        return Err("只能预览普通图片文件".into());
+    }
+    let extension = extension(&path);
     if !matches!(
         extension.as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "avif" | "heic" | "bmp"
     ) {
         return Err("此文件格式不支持图片预览".into());
-    }
-    let metadata = fs::metadata(&path).map_err(|e| io_error("无法读取图片", &path, e))?;
-    if !metadata.is_file() {
-        return Err("只能预览普通图片文件".into());
     }
     if metadata.len() > MAX_IMAGE_BYTES {
         return Err("图片超过 32 MB，请使用默认应用打开".into());
@@ -1100,7 +1102,7 @@ mod tests {
         use std::os::unix::fs::symlink;
         let dir = tempdir().unwrap();
         let source = dir.path().join("original.svg");
-        let link = dir.path().join("linked.svg");
+        let link = dir.path().join("linked");
         fs::write(&source, "<svg/>").unwrap();
         symlink(&source, &link).unwrap();
         assert_eq!(read_image(&display(&link)).unwrap(), b"<svg/>");
@@ -1412,7 +1414,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn failed_replacement_restores_original_and_same_folder_can_keep_both() {
-        use std::os::unix::fs::symlink;
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
         let root = tempdir().unwrap();
         let source = root.path().join("source");
         let dest = root.path().join("dest");
@@ -1420,18 +1422,21 @@ mod tests {
         fs::create_dir(&dest).unwrap();
         let source = source.canonicalize().unwrap();
         let dest = dest.canonicalize().unwrap();
-        symlink("missing", source.join("link")).unwrap();
-        fs::write(dest.join("link"), "original").unwrap();
-        let paths = vec![display(&source.join("link"))];
+        let fifo = source.join("fifo");
+        let fifo_path = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: fifo_path is NUL-terminated and lives through the call.
+        assert_eq!(unsafe { libc::mkfifo(fifo_path.as_ptr(), 0o600) }, 0);
+        fs::write(dest.join("fifo"), "original").unwrap();
+        let paths = vec![display(&fifo)];
         assert!(transfer_entries_with_policy(
             paths,
             &display(&dest),
             "copy",
             "replace",
-            vec![display(&dest.join("link"))]
+            vec![display(&dest.join("fifo"))]
         )
         .is_err());
-        assert_eq!(fs::read_to_string(dest.join("link")).unwrap(), "original");
+        assert_eq!(fs::read_to_string(dest.join("fifo")).unwrap(), "original");
         assert_eq!(fs::read_dir(&dest).unwrap().count(), 1);
         fs::write(source.join("file.txt"), "content").unwrap();
         let paths = vec![display(&source.join("file.txt"))];
@@ -1468,19 +1473,76 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn symlinks_are_listed_and_failed_copy_is_cleaned_up() {
+    fn copies_file_directory_and_unavailable_symlinks_without_following_them() {
         use std::os::unix::fs::symlink;
         let dir = tempdir().unwrap();
         let source = dir.path().join("source");
         let target = dir.path().join("target");
         fs::create_dir(&source).unwrap();
         fs::create_dir(&target).unwrap();
-        symlink("/nonexistent-pudding-target", source.join("broken")).unwrap();
+        fs::write(source.join("video.mp4"), "video").unwrap();
+        fs::write(source.join("report.pdf"), "%PDF").unwrap();
+        symlink("video.mp4", source.join("video-link")).unwrap();
+        symlink("report.pdf", source.join("report-link")).unwrap();
+        symlink("missing", source.join("broken")).unwrap();
+        symlink(".", source.join("cycle")).unwrap();
+        symlink(&source, source.join("absolute")).unwrap();
         let listing = read_directory(&display(&source)).unwrap();
-        assert!(listing.entries[0].is_symlink);
-        assert!(transfer_entries(vec![display(&source)], &display(&target), "copy").is_err());
-        assert!(!target.join("source").exists());
-        assert!(fs::symlink_metadata(source.join("broken")).is_ok());
+        let link = listing
+            .entries
+            .iter()
+            .find(|e| e.name == "video-link")
+            .unwrap();
+        assert!(link.is_symlink && !link.is_dir && !link.link_unavailable);
+        assert_eq!(link.link_target.as_deref(), Some("video.mp4"));
+        assert_eq!(link.extension, "mp4");
+        assert!(listing
+            .entries
+            .iter()
+            .any(|e| e.name == "cycle" && e.is_symlink && e.is_dir));
+        assert!(listing
+            .entries
+            .iter()
+            .any(|e| e.name == "broken" && e.is_symlink && e.link_unavailable));
+        assert_eq!(
+            video_preview_path(&link.path).unwrap(),
+            display(&source.join("video.mp4").canonicalize().unwrap())
+        );
+        assert_eq!(
+            read_preview_file(&display(&source.join("report-link")), "pdf").unwrap(),
+            b"%PDF"
+        );
+        assert!(resolved_source(&display(&source.join("broken")))
+            .unwrap_err()
+            .contains("链接目标不可用"));
+
+        transfer_entries(vec![display(&source)], &display(&target), "copy").unwrap();
+        let copy = target.join("source");
+        for name in ["video-link", "report-link", "broken", "cycle", "absolute"] {
+            assert_eq!(
+                fs::read_link(copy.join(name)).unwrap(),
+                fs::read_link(source.join(name)).unwrap()
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(copy.join("video-link")).unwrap(),
+            "video"
+        );
+        assert!(fs::symlink_metadata(source.join("broken"))
+            .unwrap()
+            .is_symlink());
+
+        let conflicting = target.join("broken");
+        fs::write(&conflicting, "old").unwrap();
+        transfer_entries_with_policy(
+            vec![display(&source.join("broken"))],
+            &display(&target),
+            "copy",
+            "replace",
+            vec![display(&conflicting.canonicalize().unwrap())],
+        )
+        .unwrap();
+        assert_eq!(fs::read_link(conflicting).unwrap(), Path::new("missing"));
     }
 }
 

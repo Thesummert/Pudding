@@ -37,7 +37,7 @@ export const api = {
     else { const url = new URL(window.location.href); url.searchParams.set('path', path); window.open(url.toString(), '_blank'); }
   },
   watch: (path: string) => desktop ? invoke<void>('watch_directory', { path }) : Promise.resolve(),
-  listenChanges: (handler: () => void) => desktop ? listen('filesystem-changed', handler) : Promise.resolve(() => {}),
+  listenChanges: (handler: () => void) => desktop ? getCurrentWebview().listen('filesystem-changed', handler) : Promise.resolve(() => {}),
   listenSearchProgress: (handler: (progress: [number, number]) => void) => desktop ? listen<[number, number]>('search-progress', (event) => handler(event.payload)) : Promise.resolve(() => {}),
   search: (path: string, query: string, hidden: boolean, searchContent: boolean, requestId: number) => desktop ? invoke<FileEntry[]>('search_files', { path, query, hidden, searchContent, requestId }) : Promise.resolve<FileEntry[] | null>(null),
   info: () => call<AppInfo>('get_app_info'),

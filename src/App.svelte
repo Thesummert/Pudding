@@ -201,6 +201,8 @@
   }
 
   let request = 0;
+  let pendingReload: symbol | undefined;
+  let folderPreviewVersion = $state(0);
   let notice = $state<{ text: string; error: boolean } | null>(null);
   let noticeTimeout: ReturnType<typeof setTimeout>;
   let dialog = $state<{ mode: 'create' | 'create-file' | 'rename'; entry?: FileEntry } | null>(null);
@@ -303,7 +305,7 @@
   let fileCount = $derived(entries.length - folderCount);
   let crumbs = $derived(directory ? breadcrumbs(directory.path) : []);
   let busy = $derived(loading || operating);
-  let selectedSizeKnown = $derived(selectedEntries.every((entry) => !entry.metadataPending && !entry.metadataUnavailable));
+  let selectedSizeKnown = $derived(selectedEntries.every((entry) => !entry.metadataPending && !entry.metadataUnavailable && !entry.linkUnavailable));
   let selectedSize = $derived(selectedEntries.reduce((total, entry) => total + (entry.isDir ? 0 : entry.size), 0));
   let inspectorEntry = $derived(focused ?? { name: title, path: directory?.path ?? '', isDir: true, isSymlink: false, size: 0, modified: null, hidden: false, extension: '' });
 
@@ -353,7 +355,10 @@
   $effect(() => {
     if (searching) return;
     const visiblePaths = new Set(entries.map((e) => e.path));
-    if ([...selected].some((path) => !visiblePaths.has(path))) selected = new Set([...selected].filter((path) => visiblePaths.has(path)));
+    if ([...selected].some((path) => !visiblePaths.has(path))) {
+      context = null;
+      selected = new Set([...selected].filter((path) => visiblePaths.has(path)));
+    }
   });
 
   $effect(() => {
@@ -411,8 +416,8 @@
     const volumeTimer = desktop ? setInterval(() => void refreshVolumes(), 5000) : undefined;
     let changeTimer: ReturnType<typeof setTimeout>;
     function applyChanges() {
-      if (busy) { changeTimer = setTimeout(applyChanges, 300); return; }
-      searchVersion++; refresh();
+      if (busy || pendingReload) { changeTimer = setTimeout(applyChanges, 300); return; }
+      if (directory) void reloadDirectory(directory.path);
     }
     void api.listenChanges(() => {
       clearTimeout(changeTimer);
@@ -421,7 +426,7 @@
     void api.listenDrop(nativeDrop).then((cleanup) => {
       if (disposed) cleanup(); else unlisten = cleanup;
     }).catch((error) => notify(errorMessage(error), true));
-    return () => { disposed = true; unlisten?.(); unlistenChanges?.(); unlistenProgress?.(); unlistenOpen?.(); clearInterval(volumeTimer); volumeRequest++; clearTimeout(changeTimer); clipboardRequest += 1; request += 1; clearTimeout(noticeTimeout); };
+    return () => { disposed = true; unlisten?.(); unlistenChanges?.(); unlistenProgress?.(); unlistenOpen?.(); clearInterval(volumeTimer); volumeRequest++; clearTimeout(changeTimer); clipboardRequest += 1; request += 1; pendingReload = undefined; clearTimeout(noticeTimeout); };
   });
 
   function notify(text: string, error = false) {
@@ -452,8 +457,11 @@
   async function navigate(path: string, index?: number, refresh = false) {
     if (operating) return;
     const id = ++request;
+    pendingReload = undefined;
     loading = true;
     context = null;
+    optionsOpen = false;
+    dropMenu = null;
     try {
       const result = await api.read(path);
       if (id !== request) return;
@@ -464,6 +472,7 @@
         descending = saved?.descending ?? false;
       }
       directory = result;
+      folderPreviewVersion++;
       if (!refresh) { recentFolders = [result.path, ...recentFolders.filter((item) => item !== result.path)].slice(0, 50); showingRecent = false; }
       void api.setWindowDirectory(result.path).catch(() => {});
       if (!refresh) void api.watch(result.path).catch((error) => notify(errorMessage(error), true));
@@ -486,6 +495,23 @@
       if (!directory) initialError = errorMessage(error);
       else notify(errorMessage(error), true);
     } finally { if (id === request) loading = false; }
+  }
+
+  async function reloadDirectory(path: string, selectPaths: string[] = []) {
+    const id = Symbol();
+    pendingReload = id;
+    try {
+      const result = await api.read(path);
+      if (id !== pendingReload || result.path !== path) return;
+      directory = result;
+      folderPreviewVersion++;
+      if (!context && !operating && selectPaths.length) selected = new Set(selectPaths);
+      if (query.trim()) searchVersion++;
+    } catch (error) {
+      if (id === pendingReload) notify(errorMessage(error), true);
+    } finally {
+      if (id === pendingReload) pendingReload = undefined;
+    }
   }
 
   function switchTab(id: number) {
@@ -608,7 +634,11 @@
     finally { smbConnecting = false; }
   }
 
-  function refresh() { if (directory && !busy) { void refreshVolumes(); void navigate(directory.path, undefined, true); } }
+  function refresh() {
+    if (!directory || busy) return;
+    void refreshVolumes();
+    if (!pendingReload) void reloadDirectory(directory.path);
+  }
   function back() { if (showingRecent) showingRecent = false; else if (!busy && historyIndex > 0) void navigate(history[historyIndex - 1], historyIndex - 1); }
   function forward() { if (!busy && historyIndex < history.length - 1) void navigate(history[historyIndex + 1], historyIndex + 1); }
   function up() { if (!busy && directory?.parent) void navigate(directory.parent); }
@@ -790,10 +820,7 @@
     } finally {
       await syncClipboard();
       if (!started) operating = false;
-      if (directory?.path === destination && !busy) {
-        await navigate(destination, undefined, true);
-        if (paths.length && directory?.path === destination) selected = new Set(paths);
-      }
+      if (directory?.path === destination && !busy) await reloadDirectory(destination, paths);
     }
   }
 
@@ -847,10 +874,7 @@
     } catch (error) { notify(errorMessage(error), true); }
     finally {
       if (!started) operating = false;
-      if (directory?.path === current && !busy) {
-        await navigate(current, undefined, true);
-        if (destination === current && paths.length && directory?.path === current) selected = new Set(paths);
-      }
+      if (directory?.path === current && !busy) await reloadDirectory(current, destination === current ? paths : []);
     }
   }
 
@@ -1114,9 +1138,17 @@
       }
     }
   }
+
+  function windowBlur() {
+    dragGesture = null;
+    dropTarget = null;
+    shiftHeld = false;
+    if (marquee) selected = new Set(marquee.initial);
+    marquee = null;
+  }
 </script>
 
-<svelte:window onmousedown={mouseNavigation} onauxclick={(event) => { if (event.button === 3 || event.button === 4) event.preventDefault(); }} onfocus={() => { void syncClipboard(); void refreshVolumes(); }} onpointermove={pointerMove} onpointerup={(event) => { dragGesture = null; endMarquee(event); }} onpointercancel={(event) => { dragGesture = null; endMarquee(event, true); }} ondragover={demoDragOver} ondrop={demoDrop} ondragend={() => { demoDrag = null; dropTarget = null; }} ondragleave={(event) => { if (!event.relatedTarget) dropTarget = null; }} onkeydown={keydown} onkeyup={(event) => { dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey }; shiftHeld = event.shiftKey; }} onclick={() => { context = null; optionsOpen = false; dropMenu = null; }} onblur={() => { context = null; optionsOpen = false; dragGesture = null; dropTarget = null; shiftHeld = false; if (marquee) selected = new Set(marquee.initial); marquee = null; }} onresize={() => context = null} />
+<svelte:window onmousedown={mouseNavigation} onauxclick={(event) => { if (event.button === 3 || event.button === 4) event.preventDefault(); }} onfocus={() => { void syncClipboard(); void refreshVolumes(); }} onpointermove={pointerMove} onpointerup={(event) => { dragGesture = null; endMarquee(event); }} onpointercancel={(event) => { dragGesture = null; endMarquee(event, true); }} ondragover={demoDragOver} ondrop={demoDrop} ondragend={() => { demoDrag = null; dropTarget = null; }} ondragleave={(event) => { if (!event.relatedTarget) dropTarget = null; }} onkeydown={keydown} onkeyup={(event) => { dragModifiers = { ctrl: event.ctrlKey, shift: event.shiftKey }; shiftHeld = event.shiftKey; }} onclick={() => { context = null; optionsOpen = false; dropMenu = null; }} onblur={windowBlur} />
 
 <div class="app-shell" class:has-background={!!backgroundUrl} data-theme={dark ? 'dark' : 'light'}>
   {#if backgroundUrl}<div class="window-background" aria-hidden="true"><img src={backgroundUrl} alt="" style={`filter: blur(${preferences.backgroundBlur}px); opacity: ${preferences.backgroundOpacity / 100}`} /></div>{/if}
@@ -1249,8 +1281,8 @@
                   {@const index = windowed.start + localIndex}
                   <button class="file-card" draggable={!desktop && !busy} onpointerdown={(event) => beginDrag(event, entry)} ondragstart={(event) => demoDragStart(event, entry)} data-drop-path={entry.isDir && !entry.isApp ? entry.path : undefined} class:drop-target={dropRegion === 'browser' && dropTarget === entry.path} class:selected={selected.has(entry.path)} class:cut={clipboard?.mode === 'cut' && clipboard.paths.includes(entry.path)} data-index={index} aria-label={entry.name} aria-pressed={selected.has(entry.path)} title={`${entry.name}\n${entry.isDir ? fileKind(entry) : formatEntrySize(entry)}\n${entry.isApp ? '双击运行' : '双击打开'}`} onclick={(event) => selectEntry(entry, event)} ondblclick={() => openEntry(entry)} oncontextmenu={(event) => contextMenu(event, entry)} disabled={operating}>
                     {#if selected.has(entry.path)}<span class="selected-check"><Check size={10} strokeWidth={3} /></span>{/if}
-                    <span class="file-visual">{#if entry.isDir && !entry.isApp}<FolderPreview {entry} hidden={preferences.hidden} refreshToken={directory} />{:else if !entry.metadataPending && (isImage(entry) || isVideo(entry))}<FileThumbnail {entry} large />{:else}<FileIcon {entry} large />{/if}</span>
-                    <span class="file-name">{entry.name}</span><span class="file-caption">{entry.isApp ? fileKind(entry) : entry.isDir ? folderLabels[entry.name] ?? '文件夹' : formatEntrySize(entry)}</span>
+                    <span class="file-visual">{#if entry.isDir && !entry.isApp}<FolderPreview {entry} hidden={preferences.hidden} version={folderPreviewVersion} />{:else if !entry.metadataPending && (isImage(entry) || isVideo(entry))}<FileThumbnail {entry} large />{:else}<FileIcon {entry} large />{/if}</span>
+                    <span class="file-name">{entry.name}</span><span class="file-caption">{entry.isApp || entry.isSymlink ? fileKind(entry) : entry.isDir ? folderLabels[entry.name] ?? '文件夹' : formatEntrySize(entry)}</span>
                   </button>
                 {/each}
                 {#if windowed.after}<div class="virtual-grid-spacer" style={`height: ${windowed.after}px`} aria-hidden="true"></div>{/if}
@@ -1283,7 +1315,7 @@
             {/if}
             <div class="inspector-name"><h2>{selected.size > 1 ? `${selected.size} 个项目` : focused?.name ?? title}</h2><span class="type-badge">{selected.size > 1 ? '多项选择' : focused ? fileKind(focused) : '当前文件夹'}</span></div>
             <div class="inspector-divider"></div>
-            <dl class="properties"><div><dt>位置</dt><dd class="path-value" title={focused?.path ?? directory?.path}>{selected.size > 1 ? directory?.path : focused?.path ?? directory?.path ?? '—'}</dd></div>{#if focused}<div><dt>类型</dt><dd>{fileKind(focused)}</dd></div>{#if !focused.isDir}<div><dt>大小</dt><dd>{formatEntrySize(focused)}</dd></div>{/if}<div><dt>修改时间</dt><dd>{formatDate(focused.modified)}</dd></div><MediaDetails entry={focused} />{:else if selected.size > 1}<div><dt>已选项目</dt><dd>{selected.size} 项</dd></div><div><dt>文件大小</dt><dd>{formatSize(selectedSize)}</dd></div>{:else}<div><dt>内容</dt><dd>{directory?.entries.filter((e) => preferences.hidden || !e.hidden).length ?? 0} 个项目</dd></div><div><dt>文件夹</dt><dd>{directory?.entries.filter((e) => e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div><div><dt>文件</dt><dd>{directory?.entries.filter((e) => !e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div>{/if}</dl>
+            <dl class="properties"><div><dt>位置</dt><dd class="path-value" title={focused?.path ?? directory?.path}>{selected.size > 1 ? directory?.path : focused?.path ?? directory?.path ?? '—'}</dd></div>{#if focused}<div><dt>类型</dt><dd>{fileKind(focused)}</dd></div>{#if focused.linkTarget !== undefined}<div><dt>链接目标</dt><dd class="path-value" title={focused.linkTarget}>{focused.linkTarget}</dd></div>{/if}{#if !focused.isDir}<div><dt>大小</dt><dd>{formatEntrySize(focused)}</dd></div>{/if}<div><dt>修改时间</dt><dd>{formatDate(focused.modified)}</dd></div><MediaDetails entry={focused} />{:else if selected.size > 1}<div><dt>已选项目</dt><dd>{selected.size} 项</dd></div><div><dt>文件大小</dt><dd>{formatSize(selectedSize)}</dd></div>{:else}<div><dt>内容</dt><dd>{directory?.entries.filter((e) => preferences.hidden || !e.hidden).length ?? 0} 个项目</dd></div><div><dt>文件夹</dt><dd>{directory?.entries.filter((e) => e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div><div><dt>文件</dt><dd>{directory?.entries.filter((e) => !e.isDir && (preferences.hidden || !e.hidden)).length ?? 0}</dd></div>{/if}</dl>
             {#if focused}<button class="button inspector-open" onclick={() => focused!.isDir ? openEntry(focused!) : openExternal(focused!)} disabled={busy}><ExternalLink size={15} />{focused.isApp ? '运行应用' : focused.isDir ? '打开文件夹' : '使用默认应用打开'}<ArrowRight size={14} /></button>{:else if hasOpenableSelection}<button class="button inspector-open" onclick={openSelection} disabled={busy}><ExternalLink size={15} />{openSelectionLabel}<ArrowRight size={14} /></button>{/if}
             <div class="inspector-tip"><span class="tip-label"><Info size={14} />小提示</span><p>{selected.size ? `按住 ${shortcutModifier} 点选多个项目，按 Shift 连续选择，或拖动空白处框选。` : '单击查看文件信息，双击打开。也可以在地址栏中输入路径。'}</p></div>
           </aside>
@@ -1325,7 +1357,7 @@
     {#if focused && !isImage(focused)}<button role="menuitem" onclick={() => { context = null; if (focused) void openEntry(focused); }}><ExternalLink size={16} /><span>{focused.isApp ? '运行应用' : '打开'}</span><kbd>Enter</kbd></button>{/if}
     {#if focused?.isApp}<button role="menuitem" onclick={() => { context = null; if (focused) void navigate(focused.path); }}><Folder size={16} /><span>显示包内容</span></button>{/if}
     {#if selectedEntries.length > 1 && hasOpenableSelection}<button role="menuitem" onclick={openSelection}><ExternalLink size={16} /><span>{openSelectionLabel}</span><kbd>Enter</kbd></button>{/if}
-    {#if desktop && focused && !focused.isDir}<button role="menuitem" onclick={() => void openWith(focused!)}><ExternalLink size={16} /><span>选择其他应用打开…</span></button>{/if}
+    {#if desktop && focused && !focused.isDir && !focused.linkUnavailable}<button role="menuitem" onclick={() => void openWith(focused!)}><ExternalLink size={16} /><span>选择其他应用打开…</span></button>{/if}
     {#if directory && (focused?.isDir || selected.size === 0)}
       <button role="menuitem" aria-haspopup="menu" aria-expanded={openElsewhereMenuOpen} onclick={(event) => { event.stopPropagation(); openElsewhereMenuOpen = !openElsewhereMenuOpen; sugarMenuOpen = false; }} onmouseenter={() => { openElsewhereMenuOpen = true; sugarMenuOpen = false; }} onkeydown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); openElsewhereMenuOpen = true; sugarMenuOpen = false; void tick().then(() => document.querySelector<HTMLButtonElement>('.open-elsewhere-submenu button')?.focus()); } }}><ExternalLink size={16} /><span>在其他地方打开</span><ChevronRight size={14} /></button>
       {#if openElsewhereMenuOpen}<div class="context-submenu open-elsewhere-submenu" role="menu" aria-label="在其他地方打开">

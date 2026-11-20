@@ -36,6 +36,7 @@
     <div><dt>大小</dt><dd>{entry.isDir ? (sizeError ? '无法计算' : folderSize === null ? '正在计算…' : formatSize(folderSize)) : formatEntrySize(entry)}</dd></div>
     <div><dt>修改时间</dt><dd>{formatDate(entry.modified)}</dd></div>
     <div><dt>位置</dt><dd>{entry.path}</dd></div>
+    {#if entry.linkTarget !== undefined}<div><dt>链接目标</dt><dd>{entry.linkTarget}</dd></div>{/if}
     <MediaDetails {entry} />
   </dl>
   {#if entry.isDir}<p class="info-preview-note">文件夹大小为文件内容总计，不包含符号链接。</p>{/if}
