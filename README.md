@@ -70,7 +70,7 @@ npm run tauri build
 
 ### GitHub Actions 构建
 
-推送、提交拉取请求或手动运行 `Build desktop packages` 工作流时，会分别构建 Linux x64 的 DEB、macOS ARM64 的 DMG，以及 Windows x64 的 NSIS 和 MSI 安装包。构建完成后可在对应的 Actions 运行页面下载 artifacts。工作流不自动发布 Release；这些安装包未配置代码签名或 macOS 公证。
+推送、提交拉取请求或手动运行 `Build desktop packages` 工作流时，会分别构建 Linux x64 的 DEB、Arch Linux x64 的 pacman 包、macOS ARM64 的 DMG，以及 Windows x64 的 NSIS 和 MSI 安装包。构建完成后可在对应的 Actions 运行页面下载 artifacts。工作流不自动发布 Release；这些安装包未配置代码签名或 macOS 公证。
 
 ### Windows 构建脚本
 

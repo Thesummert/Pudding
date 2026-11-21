@@ -211,6 +211,10 @@ test('preview zooms with the wheel, pans with the left button and closes outside
   const canvas = dialog.locator('.image-preview');
   const image = canvas.locator('img');
   await expect(image).toBeVisible();
+  // The dialog's entrance animation also transforms the image's bounding box.
+  await dialog.evaluate(async (element) => {
+    await Promise.all(element.getAnimations().map((animation) => animation.finished));
+  });
   const box = (await canvas.boundingBox())!;
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;

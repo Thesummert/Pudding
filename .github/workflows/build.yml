@@ -55,3 +55,26 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.path }}
           if-no-files-found: error
+
+  arch:
+    name: Build Arch Linux x64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pacman package in Arch Linux
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -e BUILD_UID="$(id -u)" \
+            archlinux:base-devel bash -euxo pipefail -c '
+              pacman -Syu --noconfirm --needed nodejs npm rust gtk3 webkit2gtk-4.1 openssl xdotool libayatana-appindicator librsvg
+              useradd -m -u "$BUILD_UID" builder
+              cd /workspace
+              runuser -u builder -- npm run build:arch
+            '
+      - name: Upload pacman package
+        uses: actions/upload-artifact@v4
+        with:
+          name: pudding-arch-linux-x64
+          path: src-tauri/target/release/bundle/pacman/*.pkg.tar.zst
+          if-no-files-found: error
